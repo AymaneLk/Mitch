@@ -73,6 +73,11 @@ function ps(data) {
 }
 function secureWindow(options,page) {
   const win=new BrowserWindow({...options,webPreferences:{preload:path.join(root,'preload.js'),nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false}});
+  if(smoke){
+    win.webContents.on('console-message',event=>{if(event.level==='error')console.error('Renderer:',event.message);});
+    const execute=win.webContents.executeJavaScript.bind(win.webContents);
+    win.webContents.executeJavaScript=async(code,...args)=>{try{return await execute(code,...args);}catch(error){throw new Error('Smoke renderer command failed: '+code.slice(0,180)+' — '+error.message);}};
+  }
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
   win.loadFile(path.join(root,'ui',page)); return win;

@@ -2,6 +2,7 @@
 class LocalVoice {
   constructor({status,caption,error}){this.onStatus=status;this.onCaption=caption;this.onError=error;this.state='idle';this.generation=0;}
   change(state,label){this.state=state;this.onStatus(state,label);}
+  caption(text,speaker){if(this.state==='active')this.onCaption(text,speaker);}
   async start({wakeId}={}){
     if(this.state!=='idle')return;
     const generation=++this.generation;this.change('connecting','Starting local voice…');
@@ -13,6 +14,7 @@ class LocalVoice {
       this.session=await window.companion.localVoiceStart();
       if(generation!==this.generation)return;
       this.context=new AudioContext();await this.context.resume();
+      if(generation!==this.generation){this.context?.close().catch(()=>{});return;}
       this.source=this.context.createMediaStreamSource(stream);this.analyser=this.context.createAnalyser();this.analyser.fftSize=1024;this.source.connect(this.analyser);
       this.listen(generation);
     }catch(error){if(generation===this.generation){this.onError(error.message);this.cleanup();}}
@@ -38,7 +40,7 @@ class LocalVoice {
       const bytes=Array.from(new Uint8Array(await new Blob(chunks,{type:mime}).arrayBuffer()));
       if(generation!==this.generation)return;
       const result=await window.companion.localVoiceTurn(bytes,this.session);if(generation!==this.generation)return;
-      if(result.transcript)this.onCaption(result.transcript,'You');if(result.answer)this.onCaption(result.answer,'Mitch');
+      if(result.transcript)this.caption(result.transcript,'You');if(result.answer)this.caption(result.answer,'Mitch');
       if(result.audio.length){
         this.change('active','Speaking locally…');this.url=URL.createObjectURL(new Blob([new Uint8Array(result.audio)],{type:'audio/wav'}));this.audio=new Audio(this.url);
         await new Promise((resolve,reject)=>{this.finishPlayback=resolve;this.audio.onended=resolve;this.audio.onerror=()=>reject(new Error('Local audio playback failed.'));this.audio.play().catch(reject);});

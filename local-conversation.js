@@ -16,7 +16,7 @@ class LocalConversation {
       if(settings.chatProvider!=='local'||settings.transcriptionProvider!=='local')throw new Error('Local voice requires local chat and dictation.');
       const transcript=await localTranscribe(this.fetch,settings,bytes,signal);check();
       if(!transcript.trim())return {transcript:'',answer:'',audio:[]};
-      const answer=await this.ai.chat(transcript,undefined,scope);check();
+      const answer=await this.ai.chat(transcript,undefined,scope,{spoken:true});check();
       const response=await this.fetch(localURL(settings.localSpeechUrl,'speech'),{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:answer.slice(0,2000),language:settings.localVoiceLanguage||'en-us'}),redirect:'error',signal});
       if(!response.ok)throw new Error('Local speech generation failed.');
       const audio=Array.from(new Uint8Array(await response.arrayBuffer()));check();

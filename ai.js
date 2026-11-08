@@ -47,13 +47,13 @@ class AI {
     if(!response.ok) throw new Error(data.error?.message || `OpenAI request failed (${response.status}).`);
     return data;
   }
-  async chat(text, image, activityScope) {
+  async chat(text, image, activityScope, {spoken=false}={}) {
     if(this.busy) throw new Error('Wait for the current reply.');
     if(typeof text!=='string'||!text.trim()||text.length>16000) throw new Error('Enter a message under 16,000 characters.');
     this.busy=true;
     const controller=new AbortController();this.controller=controller;const signal=controller.signal;
     const input=[...this.history,{role:'user',content:image?[{type:'input_text',text},{type:'input_image',image_url:image,detail:'auto'}]:text}];
-    const model=this.getSettings().chatModel,taskInstructions=instructions+new Date().toString();
+    const model=this.getSettings().chatModel,taskInstructions=instructions+new Date().toString()+(spoken?' This is a spoken conversation. Reply in one or two short sentences unless the user asks for detail. Use plain spoken text without markdown or lists.':'');
     try {
       for(let step=0;step<40;step++) {
         signal.throwIfAborted();

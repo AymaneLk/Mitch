@@ -1,0 +1,54 @@
+{
+  "files": [
+    {
+      "file": "LICENSE",
+      "sha256": "784c4a353d15f370ff387f74bde64f50a2041df9c6f2338c3d8a2f781b944de5"
+    },
+    {
+      "file": "NOTICE",
+      "sha256": "0849de251c109869d24f8a0b520260afa10594334ae3d0c06b75e68be1e2c623"
+    },
+    {
+      "file": "README.md",
+      "sha256": "130e980821b27312b63e0463c4068994c8487106ee25756d58e0bd60a2727e59"
+    },
+    {
+      "file": "requirements.txt",
+      "sha256": "a83a2a4ed7ab2e022b9b8a83cfa2b8cf52cc243006c597e8b96f90a8365590ac"
+    },
+    {
+      "file": "woof_int8.npz",
+      "sha256": "d895fbbe84b8f4f461e3e94ab48b1164353b1988ce8d365f5aa8263d0de1203e"
+    },
+    {
+      "file": "underdog_woof/__init__.py",
+      "sha256": "aaacf02b28eabce10280a60c2699d4e40d4ca5aa22170d169b64943fee7849f7"
+    },
+    {
+      "file": "underdog_woof/__main__.py",
+      "sha256": "737f9823169c5337f49dbc27ab51f0ceab5d5d0302e6c0f3aad051ad13562a3b"
+    },
+    {
+      "file": "underdog_woof/normalize.py",
+      "sha256": "f6d7c39ec8a58bb6ab1d36ee6ee0eae3c543aac8dddaa29f4065e72706c7c044"
+    },
+    {
+      "file": "underdog_woof/respell.py",
+      "sha256": "6bf6bd4760474b991230a523d3f17b423012646737000b8974bd257875308a71"
+    },
+    {
+      "file": "underdog_woof/respell.tsv",
+      "sha256": "4c700d4015390bb6e34c1f7362f87ea75acfb45144d2fbc45cf00d5739b66abc"
+    },
+    {
+      "file": "underdog_woof/runtime.py",
+      "sha256": "e22d1e2a92f4d28c3784abbb889d77609dcecd1856bf6e65f03432b803a8d220"
+    },
+    {
+      "file": "underdog_woof/textsplit.py",
+      "sha256": "f46ae52b24fae666ebe1dc55ebf644da757f238f1bb0408a3cc2dadb39eaf6e8"
+    }
+  ],
+  "revision": "be702960539777fc3f698e54335276a8391b00f9",
+  "repository": "ConwayResearch/Underdog-Woof"
+}
