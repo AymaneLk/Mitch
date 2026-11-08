@@ -6,3 +6,5 @@ main>header{position:sticky;top:0;z-index:20;background:#f6f4ef}
 .computer-controls [hidden]{display:none}
 .settings-actions [hidden]{display:none}
 #computerStatus{font-size:12px;color:#526447}
+
+.voice-bar{flex-wrap:wrap}.voice-bar>div{flex:1 1 180px}.voice-bar>label{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}.voice-bar>label input{width:auto;margin:0}

@@ -6,7 +6,7 @@ Windows Electron desktop companion with notes, reminders, dictation, screen unde
 
 Chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation uses Qwen3-ASR-0.6B Q8 on the CPU. A local Kokoro service supplies English/French speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
 
-Version 0.6.0-local.2 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Qwen-ASR → Qwen/tools → Kokoro with a local microphone energy detector and a one-second silence boundary. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
+Version 0.6.0-local.3 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Qwen-ASR → Qwen/tools → Kokoro with manual Send turn by default and optional automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
 
 The original cloud edition remains on `main` and tag `v0.5.2-cloud`. The local edition is on `codex/local-ai-architecture`.
 

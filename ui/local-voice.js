@@ -1,6 +1,6 @@
 // Local half-duplex conversation. Microphone capture pauses during processing/playback.
 class LocalVoice {
-  constructor({status,caption,error}){this.onStatus=status;this.onCaption=caption;this.onError=error;this.state='idle';this.generation=0;}
+  constructor({status,caption,error,level=()=>{},microphone=()=>{}}){this.onStatus=status;this.onCaption=caption;this.onError=error;this.onLevel=level;this.onMicrophone=microphone;this.state='idle';this.generation=0;this.autoSend=false;this.microphoneId='';}
   change(state,label){this.state=state;this.onStatus(state,label);}
   caption(text,speaker){if(this.state==='active')this.onCaption(text,speaker);}
   async start({wakeId}={}){
@@ -9,8 +9,9 @@ class LocalVoice {
     try{
       const lease=await window.companion.claimMicrophone('voice',wakeId);
       if(generation!==this.generation){await window.companion.releaseMicrophone(lease);return;}this.lease=lease;
-      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true},video:false});
+      const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,...(this.microphoneId?{deviceId:{exact:this.microphoneId}}:{})},video:false});
       if(generation!==this.generation){stream.getTracks().forEach(t=>t.stop());return;}this.stream=stream;
+      this.onMicrophone(stream.getAudioTracks()[0]?.label||'System default microphone');
       this.session=await window.companion.localVoiceStart();
       if(generation!==this.generation)return;
       this.context=new AudioContext();await this.context.resume();
@@ -21,21 +22,23 @@ class LocalVoice {
   }
   listen(generation){
     if(generation!==this.generation)return;
-    this.stream.getAudioTracks().forEach(t=>t.enabled=true);this.change('active','Listening locally… pause to send');
+    this.stream.getAudioTracks().forEach(t=>t.enabled=true);this.listening=true;this.change('active',this.autoSend?'Listening locally… pause or click Send':'Listening locally… click Send when finished');
     const chunks=[],recorder=new MediaRecorder(this.stream);this.recorder=recorder;
     let voiced=false,lastVoice=performance.now(),started=lastVoice;
+    this.sendTurn=()=>{if(recorder.state==='recording'){voiced=true;clearInterval(this.timer);recorder.stop();}};
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
     recorder.onstop=()=>{clearInterval(this.timer);if(generation===this.generation&&voiced)this.respond(chunks,recorder.mimeType,generation);else if(generation===this.generation)this.listen(generation);};
     recorder.onerror=()=>{this.onError('Microphone recording failed.');this.cleanup();};recorder.start(250);
     const samples=new Float32Array(this.analyser.fftSize);
     this.timer=setInterval(()=>{
       this.analyser.getFloatTimeDomainData(samples);const rms=Math.sqrt(samples.reduce((sum,x)=>sum+x*x,0)/samples.length),now=performance.now();
+      this.onLevel(Math.max(0,Math.min(1,(20*Math.log10(Math.max(rms,0.000001))+60)/60)));
       if(rms>0.018){voiced=true;lastVoice=now;}
-      if((voiced&&now-lastVoice>1000)||now-started>30000){clearInterval(this.timer);if(recorder.state!=='inactive')recorder.stop();}
+      if((this.autoSend&&voiced&&now-lastVoice>1800)||now-started>120000){clearInterval(this.timer);if(recorder.state!=='inactive')recorder.stop();}
     },100);
   }
   async respond(chunks,mime,generation){
-    this.stream.getAudioTracks().forEach(t=>t.enabled=false);this.change('active','Thinking locally…');
+    this.listening=false;this.sendTurn=null;this.onLevel(0);this.stream.getAudioTracks().forEach(t=>t.enabled=false);this.change('active','Thinking locally…');
     try{
       const bytes=Array.from(new Uint8Array(await new Blob(chunks,{type:mime}).arrayBuffer()));
       if(generation!==this.generation)return;
@@ -51,6 +54,7 @@ class LocalVoice {
   }
   async stop(){this.cleanup();}
   cleanup(){
+    this.listening=false;this.sendTurn=null;this.onLevel(0);
     this.generation++;clearInterval(this.timer);if(this.recorder){this.recorder.onstop=null;if(this.recorder.state!=='inactive')this.recorder.stop();}this.recorder=null;
     this.stream?.getTracks().forEach(t=>t.stop());this.stream=null;this.source?.disconnect();this.context?.close().catch(()=>{});this.context=null;
     this.audio?.pause();this.finishPlayback?.();this.finishPlayback=null;if(this.url)URL.revokeObjectURL(this.url);this.url=null;

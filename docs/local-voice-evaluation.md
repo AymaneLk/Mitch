@@ -8,7 +8,7 @@ Microphone → local energy/silence detector → Qwen3-ASR CPU → Qwen3.5-4B GP
 
 All AI providers are forced local on profile load and save. The backend blocks cloud AI requests before reading credentials; the UI no longer permits cloud connections. Existing encrypted credentials are preserved for the original cloud edition. User-requested browser actions and websites can still use the internet.
 
-Voice is half-duplex: capture pauses during inference and playback. A one-second silence ends a spoken turn; recordings are capped at 30 seconds per turn. End conversation cancels pending work and suppresses stale replies. Already delivered desktop actions cannot be undone. The voice output language is selectable as English or French. Spoken replies are prompted to be concise.
+Voice is half-duplex: capture pauses during inference and playback. Automatic capture waits 1.8 seconds of silence. Disable Auto-send and use Send turn to preserve pauses or submit quiet speech. Recordings are capped at two minutes per turn. End conversation cancels pending work and suppresses stale replies. Already delivered desktop actions cannot be undone. The voice output language is selectable as English or French. Spoken replies are prompted to be concise.
 
 Pipecat, Silero, SmartTurn, streaming output and speech interruption are not implemented. The energy detector needs real-room/microphone validation. Automated tests do not establish natural conversation quality or noise robustness.
 
@@ -48,3 +48,10 @@ npm run smoke
 ```
 
 Generated audio and machine-readable results remain in ignored `test-output`. Model files remain in ignored `vendor/local-ai` and are excluded from packaged builds. Start the local services before launching Mitch; automatic service startup after reboot is not configured.
+
+
+## Capture update: v0.6.0-local.3
+
+Manual Send turn is now the default, so natural pauses or low volume do not automatically submit a partial utterance. Optional auto-send waits 1.8 seconds. Settings includes a microphone selector used by both voice and dictation. The voice bar identifies the actual microphone and shows live input level. No microphone audio is persisted for diagnostics.
+
+220 unit tests passed and a targeted Electron control check passed (microphone selector, manual mode, Send turn, cleanup). The broader desktop smoke failed twice at Cua accessibility inspection with a zero-node timeout, before voice caption checks; this has not been resolved by the capture change. Real user microphone/transcription accuracy still needs validation. Qwen-ASR remains the recognition model; Woof is TTS and cannot improve transcription.

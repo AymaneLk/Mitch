@@ -43,13 +43,24 @@ $('chatForm').onsubmit=e=>{e.preventDefault();chat($('message').value);};$('mess
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>chat(b.dataset.prompt));
 $('clearChat').onclick=async()=>{try{await api.resetChat();$('messages').replaceChildren();bubble('A fresh conversation. What would you like to do?');}catch(e){toast(e.message);}};
 const live=new LocalVoice({status:(state,label)=>{
+  $('sendVoice').disabled=!live.listening;
   api.voiceDisplay({type:'status',state}).catch(()=>{});
   $('voiceBar').hidden=state==='idle';$('voiceStatus').textContent=label;$('connectionLabel').textContent=state==='idle'?'Ready when you are':label;
   document.querySelectorAll('.voice-toggle').forEach(b=>{b.textContent=state==='idle'?'Start talking ↗':state==='active'?'End conversation':'Connecting…';b.disabled=['connecting','closing'].includes(state);});
   $('endVoice').disabled=state==='connecting'||state==='closing';if(state==='idle'){captionText='';captionSpeaker='';$('voiceCaption').textContent='Your microphone is on.';}
   if(state==='idle')renderWake(wakeState);
-},caption:(delta,speaker)=>{if(speaker!==captionSpeaker){captionText='';captionSpeaker=speaker;}captionText=(captionText+delta).slice(-1200);$('voiceCaption').textContent=speaker+': '+captionText.slice(-260);api.voiceDisplay({type:'caption',delta,speaker}).catch(()=>{});},error:toast,readySound:window.playWakeChime});
+},caption:(delta,speaker)=>{if(speaker!==captionSpeaker){captionText='';captionSpeaker=speaker;}captionText=(captionText+delta).slice(-1200);$('voiceCaption').textContent=speaker+': '+captionText.slice(-260);api.voiceDisplay({type:'caption',delta,speaker}).catch(()=>{});},error:toast,level:value=>$('microphoneLevel').value=value,microphone:name=>{$('microphoneName').textContent=name;refreshMicrophones().catch(()=>{});},readySound:window.playWakeChime});
 api.on('wakeState',renderWake);
+async function refreshMicrophones(){
+  const devices=await navigator.mediaDevices.enumerateDevices(),select=$('microphoneInput');
+  const choices=[{deviceId:'',label:'System default microphone'},...devices.filter(d=>d.kind==='audioinput'&&d.deviceId&&d.deviceId!=='default')];
+  if(live.microphoneId&&!choices.some(d=>d.deviceId===live.microphoneId))choices.push({deviceId:live.microphoneId,label:'Previously selected microphone (unavailable)'});
+  select.replaceChildren(...choices.map((device,index)=>{const option=document.createElement('option');option.value=device.deviceId;option.textContent=device.label||`Microphone ${index}`;return option;}));select.value=live.microphoneId;
+}
+live.microphoneId=localStorage.getItem('mitch.microphoneId')||'';
+$('microphoneInput').onchange=async e=>{live.microphoneId=e.target.value;localStorage.setItem('mitch.microphoneId',live.microphoneId);if(live.state!=='idle')await live.stop();if(recorder||dictationStarting)cancelDictation();toast('Microphone selected. Start a new recording to use it.');};
+navigator.mediaDevices.addEventListener('devicechange',()=>refreshMicrophones().catch(()=>{}));
+refreshMicrophones().catch(()=>{});
 api.on('wakeDetected',event=>{if(live.state==='idle'&&!recorder&&!transcribing&&!dictationStarting)live.start({wakeId:event.id});});
 $('resumeWake').onclick=async()=>{try{renderWake(await api.resumeWake());}catch(error){toast(error.message);}};
 $('previewWakeChime').onclick=()=>window.playWakeChime().catch(error=>toast(error.message));
@@ -57,6 +68,8 @@ api.on('tasksStopped',()=>{live.cleanup();cancelDictation();$('activity').textCo
 api.on('voiceError',message=>{live.cleanup();toast(message);});
 async function toggleVoice(){if(recorder||transcribing||dictationStarting){toast('Finish dictation before starting a conversation.');return;}if(live.state==='idle')await live.start();else await live.stop();}
 document.querySelectorAll('.voice-toggle').forEach(b=>b.onclick=toggleVoice);$('endVoice').onclick=()=>live.stop();
+$('sendVoice').onclick=()=>live.sendTurn?.();
+$('autoSendVoice').onchange=e=>{live.autoSend=e.target.checked;if(live.listening)live.change('active',live.autoSend?'Listening locally… pause or click Send':'Listening locally… click Send when finished');};
 async function toggleRecord(){
   go('dictation');
   if(recorder){recorder.stop();return;}
@@ -67,7 +80,7 @@ async function toggleRecord(){
     const state=await api.state();if(!state.hasKey&&state.settings.transcriptionProvider!=='local'){go('settings');toast('Add your API key or select local dictation in Settings.');return;}
     if(generation!==dictationGeneration)return;
     ownedLease=await api.claimMicrophone('dictation');if(generation!==dictationGeneration){releaseDictation(ownedLease);return;}dictationLease=ownedLease;
-    const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});
+    const stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,autoGainControl:true,...(live.microphoneId?{deviceId:{exact:live.microphoneId}}:{})},video:false});
     if(generation!==dictationGeneration){stream.getTracks().forEach(track=>track.stop());releaseDictation(ownedLease);return;}recordStream=stream;
     const chunks=[];recorder=new MediaRecorder(recordStream,{mimeType:'audio/webm;codecs=opus'});
     recorder.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
