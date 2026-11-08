@@ -1,0 +1,32 @@
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;background:transparent;overflow:hidden;font-family:"Segoe UI",sans-serif}
+.pet{background:#1c211b;color:#f4f7ed;border:1px solid #ffffff12;border-top:0;border-radius:0 0 22px 22px;width:calc(100% - 6px);height:calc(100% - 5px);margin:auto;box-shadow:0 2px 3px #0003;overflow:hidden}
+.head{position:relative;height:78px}
+.grip{position:absolute;inset:0 0 auto;height:15px;text-align:center;color:#737e69;font:12px sans-serif;line-height:8px;-webkit-app-region:drag}
+button{border:0;background:transparent;cursor:pointer;-webkit-app-region:no-drag}
+button:focus-visible{outline:2px solid #b5d5ff;outline-offset:-3px;border-radius:10px}
+#face{position:absolute;left:50%;top:14px;transform:translateX(-50%);width:108px;height:49px;display:flex;align-items:center;justify-content:space-between;padding:0}
+i{width:18%;height:64%;background:#f5f8ed;position:relative;clip-path:polygon(25% 0,75% 0,75% 15%,100% 15%,100% 85%,75% 85%,75% 100%,25% 100%,25% 85%,0 85%,0 15%,25% 15%);animation:blink 6s infinite}
+i:after{content:'';position:absolute;inset:25% 28%;background:#1c211b}
+#talk{position:absolute;right:7px;bottom:3px;width:30px;height:30px;display:grid;place-items:center;border-radius:50%}
+#talk:hover{background:#ffffff12}#talk span{width:7px;height:7px;background:#8eaa70;border-radius:50%}
+.active #talk span,.closing #talk span,.connecting #talk span{border-radius:2px;background:#c8e6a8}
+.active i{background:#d8edbc}.connecting i{animation:blink 6s infinite,pulse 1.2s infinite}
+.status{height:29px;padding:0 12px 10px;display:flex;align-items:center;justify-content:center;gap:7px;font-size:11px;color:#c5cebe;white-space:nowrap}
+.status-dot{width:5px;height:5px;border-radius:50%;background:#8eaa70;flex-shrink:0}
+.active .status-dot{background:#c5e9a0;box-shadow:0 0 8px #c5e9a044;animation:pulse 1.8s infinite}
+.connecting .status-dot{background:#edc795;animation:pulse 1s infinite}
+.live-label{display:none;color:#9bba86;font-size:9px;letter-spacing:1.5px;padding-left:7px;border-left:1px solid #ffffff20}
+.active .live-label{display:inline}
+#captions:not(:empty){padding:0 12px 8px}
+.caption{height:72px;padding:9px 12px 8px;border-top:1px solid #ffffff0d;background:#ffffff04;overflow:hidden}
+.caption:first-child{border-radius:12px 12px 0 0}.caption:last-child{border-radius:0 0 12px 12px}.caption:only-child{border-radius:12px}
+.caption.current{background:#ffffff09}
+.speaker{display:block;font-size:9px;line-height:12px;font-weight:600;letter-spacing:1.5px;color:#b4cfff;margin-bottom:4px}
+.caption[data-speaker="Mitch"] .speaker{color:#c4dda8}
+.words{margin:0;font-size:13px;line-height:19px;max-height:38px;overflow:auto;scrollbar-width:none;overflow-wrap:anywhere;unicode-bidi:plaintext;color:#d9dfd3}
+.current .words{color:#f3f5ee}
+.giant .head{height:156px}.giant #face{width:216px;height:100px;top:27px}.giant #talk{right:16px;bottom:15px}
+@keyframes blink{0%,45%,49%,100%{transform:scaleY(1)}47%{transform:scaleY(.1)}}
+@keyframes pulse{50%{opacity:.45}}
+@media(prefers-reduced-motion:reduce){i,.active .status-dot,.connecting .status-dot,.connecting i{animation:none}}

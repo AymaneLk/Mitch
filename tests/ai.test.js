@@ -1,0 +1,15 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');const{AI}=require('../ai');
+const settings=()=>({chatModel:'gpt-6-luna',voiceModel:'gpt-live-1',transcriptionModel:'gpt-4o-mini-transcribe',formatDictation:true});
+const response=output=>({ok:true,json:async()=>({status:'completed',output})});
+test('tool result is sent with matching call ID before final answer, key is only in authorization header',async()=>{const requests=[],actions=[];const ai=new AI(settings,async()=>'test-key',async(n,a)=>{actions.push([n,a]);return{status:'saved'};},async(url,opt)=>{requests.push({url,...opt});return requests.length===1?response([{type:'function_call',call_id:'call1',name:'create_note',arguments:'{"title":"One","text":"Two"}'}]):response([{type:'message',role:'assistant',content:[{type:'output_text',text:'Saved your note.'}]}]);});assert.equal(await ai.chat('Save One: Two'),'Saved your note.');assert.equal(actions.length,1);const second=JSON.parse(requests[1].body);assert.equal(second.input.at(-1).call_id,'call1');assert.equal(second.store,false);assert.equal(second.parallel_tool_calls,false);assert.ok(!requests[1].body.includes('test-key'));assert.equal(requests[1].headers.Authorization,'Bearer test-key');assert.equal(ai.history.length,2);});
+test('API errors propagate and busy flag recovers',async()=>{const ai=new AI(settings,async()=>'test-key',()=>{},async()=>({ok:false,status:401,json:async()=>({error:{message:'Invalid API key'}})}));await assert.rejects(ai.chat('Hi'),/Invalid API key/);assert.equal(ai.busy,false);});
+test('voice creates a WebRTC live session with no PCM format or renderer key',async()=>{let body;const ai=new AI(settings,async()=>'test-key',()=>{},async(url,opt)=>{assert.ok(url.endsWith('/live/sessions'));body=JSON.parse(opt.body);return{ok:true,json:async()=>({session:{id:'s1'},transport:{sdp:'answer'}})};});const result=await ai.voice('v=0\r\n');assert.equal(body.session.model,'gpt-live-1');assert.equal(body.session.audio.output.voice,'marin');assert.equal(body.session.audio.format,undefined);assert.equal(body.transport.type,'webrtc');assert.equal(result.transport.sdp,'answer');assert.ok(!JSON.stringify(result).includes('test-key'));});
+test('formatting failure preserves transcript',async()=>{let n=0;const ai=new AI(settings,async()=>'test-key',()=>{},async()=>{n++;return n===1?{ok:true,json:async()=>({text:'سلام عليكم'})}:{ok:false,status:500,json:async()=>({error:{message:'Unavailable'}})};});assert.equal(await ai.transcribe(Buffer.from('test recording')),'سلام عليكم');});
+
+test('screen analysis uses the task signal and stops its pending request',async()=>{
+  const controller=new AbortController();let entered;
+  const started=new Promise(resolve=>{entered=resolve;});
+  const ai=new AI(settings,async()=>'test-key',()=>{},async(_url,{signal})=>new Promise((resolve,reject)=>{signal.addEventListener('abort',()=>reject(signal.reason),{once:true});entered();}));
+  const pending=ai.see('data:image/png;base64,test','What is here?',controller.signal);
+  await started;controller.abort(new Error('Task stopped.'));await assert.rejects(pending,/Task stopped/);
+});

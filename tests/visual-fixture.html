@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>Pixie visual input fixture</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#f7f8fc;color:#152139;font:15px 'Segoe UI',sans-serif}body{padding:20px 28px}h1{font-size:21px;margin:0 0 5px}p{margin:0 0 14px;color:#44526b}canvas{display:block;width:704px;height:210px;background:white;border:1px solid #b7c5db;border-radius:8px;touch-action:none}.fields{display:grid;grid-template-columns:336px 344px;gap:24px;margin-top:18px}h2,label{display:block;font-size:15px;font-weight:600;margin:0 0 8px}.scroll{height:190px;overflow:auto;border:1px solid #aabbd6;border-radius:6px;background:white}.row{height:31px;padding:5px 12px;border-bottom:1px solid #e0e7f1}textarea{display:block;width:344px;height:150px;resize:none;border:1px solid #aabbd6;border-radius:6px;padding:10px;font:16px 'Segoe UI',sans-serif;background:#fff;color:#152139}small{display:block;margin-top:8px;color:#526078}#summary{margin-top:17px;padding:10px;border-radius:6px;background:#e7eef9;font:13px Consolas,monospace;white-space:pre-wrap;min-height:48px}
+</style>
+</head>
+<body>
+<h1>Pixie visual input test</h1>
+<p>Isolated test window. The colored targets are drawn on a canvas.</p>
+<canvas id="playground" width="704" height="210" aria-label="Pointer playground"></canvas>
+<div class="fields">
+  <section><h2>Scroll inside this panel</h2><div id="scroll" class="scroll" tabindex="0"></div></section>
+  <section><label for="editor">Text input</label><textarea id="editor" spellcheck="false" autocomplete="off">Replace this text</textarea><small>Ctrl+A selects this field. Ctrl+S records its test value.</small></section>
+</div>
+<div id="summary" aria-live="off"></div>
+<script>
+(() => {
+  'use strict';
+  const canvas=document.getElementById('playground'),ctx=canvas.getContext('2d');
+  const editor=document.getElementById('editor'),scroll=document.getElementById('scroll');
+  const state={clicks:0,doubleClicks:0,rightClicks:0,pointerMoves:0,lastPointer:null,dragStarted:0,dragCompleted:0,dragMoves:0,editorClicks:0,typedEvents:0,saveCount:0,savedText:'',keys:[]};
+  const targets={click:{x:20,y:18,w:154,h:65},doubleClick:{x:194,y:18,w:154,h:65},rightClick:{x:368,y:18,w:154,h:65},dragStart:{x:55,y:151},dragEnd:{x:620,y:151}};
+  let dragPosition={...targets.dragStart},dragging=false;
+  const inside=(point,box)=>point.x>=box.x&&point.x<=box.x+box.w&&point.y>=box.y&&point.y<=box.y+box.h;
+  const point=event=>{const box=canvas.getBoundingClientRect();return{x:(event.clientX-box.left)*canvas.width/box.width,y:(event.clientY-box.top)*canvas.height/box.height};};
+  function update(){document.getElementById('summary').textContent=`click: ${state.clicks}   double: ${state.doubleClicks}   right: ${state.rightClicks}   drag: ${state.dragCompleted}\nscroll: ${scroll.scrollTop}   input events: ${state.typedEvents}   saves: ${state.saveCount}`;}
+  function draw(){
+    ctx.clearRect(0,0,704,210);ctx.font='16px Segoe UI';ctx.textAlign='center';ctx.textBaseline='middle';
+    [['click','#dfeafe','Click once'],['doubleClick','#e7dcff','Double click'],['rightClick','#d7f2e8','Right click']].forEach(([key,color,label])=>{const box=targets[key];ctx.fillStyle=color;ctx.fillRect(box.x,box.y,box.w,box.h);ctx.fillStyle='#172947';ctx.fillText(label,box.x+box.w/2,box.y+box.h/2);});
+    ctx.strokeStyle='#a0aec5';ctx.setLineDash([6,6]);ctx.beginPath();ctx.moveTo(90,151);ctx.lineTo(576,151);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle='#eef4ff';ctx.strokeStyle='#7594c3';ctx.lineWidth=2;ctx.fillRect(587,118,66,66);ctx.strokeRect(587,118,66,66);ctx.fillStyle='#415b82';ctx.font='12px Segoe UI';ctx.fillText('DROP',620,151);
+    ctx.fillStyle=state.dragCompleted?'#13a47b':'#2567d9';ctx.beginPath();ctx.arc(dragPosition.x,dragPosition.y,21,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='11px Segoe UI';ctx.fillText('DRAG',dragPosition.x,dragPosition.y);
+    ctx.fillStyle='#526078';ctx.font='12px Segoe UI';ctx.fillText('Drag the blue circle into the outlined square',352,192);update();
+  }
+  canvas.addEventListener('click',event=>{if(inside(point(event),targets.click)){state.clicks++;update();}});
+  canvas.addEventListener('dblclick',event=>{if(inside(point(event),targets.doubleClick)){state.doubleClicks++;update();}});
+  canvas.addEventListener('contextmenu',event=>{event.preventDefault();if(inside(point(event),targets.rightClick)){state.rightClicks++;update();}});
+  canvas.addEventListener('pointerdown',event=>{const p=point(event);if(event.button===0&&Math.hypot(p.x-dragPosition.x,p.y-dragPosition.y)<=24){dragging=true;state.dragStarted++;canvas.setPointerCapture(event.pointerId);}});
+  canvas.addEventListener('pointermove',event=>{state.pointerMoves++;state.lastPointer=point(event);if(!dragging)return;dragPosition=point(event);state.dragMoves++;draw();});
+  canvas.addEventListener('pointerup',event=>{if(!dragging)return;dragging=false;dragPosition=point(event);if(Math.hypot(dragPosition.x-targets.dragEnd.x,dragPosition.y-targets.dragEnd.y)<33)state.dragCompleted++;if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);draw();});
+  canvas.addEventListener('pointercancel',()=>{dragging=false;draw();});
+  for(let i=1;i<=32;i++){const row=document.createElement('div');row.className='row';row.textContent=`Scroll row ${i}`;scroll.appendChild(row);}
+  scroll.addEventListener('scroll',update);
+  editor.addEventListener('input',()=>{state.typedEvents++;update();});
+  editor.addEventListener('click',()=>{state.editorClicks++;update();});
+  document.addEventListener('keydown',event=>{state.keys.push({key:event.key,ctrl:event.ctrlKey,alt:event.altKey,shift:event.shiftKey,meta:event.metaKey});if(state.keys.length>40)state.keys.shift();if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();state.saveCount++;state.savedText=editor.value;update();}});
+  window.fixture={
+    readState:()=>({...state,keys:state.keys.map(key=>({...key})),text:editor.value,selectionStart:editor.selectionStart,selectionEnd:editor.selectionEnd,scrollTop:scroll.scrollTop,dragPosition:{...dragPosition},activeElement:document.activeElement?.id||''}),
+    targets:()=>{
+      const c=canvas.getBoundingClientRect(),e=editor.getBoundingClientRect(),s=scroll.getBoundingClientRect();
+      const local=p=>({x:c.left+p.x*c.width/canvas.width,y:c.top+p.y*c.height/canvas.height});
+      const center=box=>local({x:box.x+box.w/2,y:box.y+box.h/2});
+      return{width:innerWidth,height:innerHeight,click:center(targets.click),double_click:center(targets.doubleClick),right_click:center(targets.rightClick),drag_start:local(targets.dragStart),drag_end:local(targets.dragEnd),text:{x:e.left+e.width/2,y:e.top+e.height/2},scroll:{x:s.left+s.width/2,y:s.top+s.height/2}};
+    },
+  };
+  draw();
+})();
+</script>
+</body>
+</html>

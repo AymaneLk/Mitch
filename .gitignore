@@ -1,0 +1,8 @@
+node_modules/
+.npm-cache/
+.electron-cache/
+test-output/
+outputs/
+vendor/
+.env*
+*.log
