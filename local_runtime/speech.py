@@ -1,5 +1,4 @@
 """Loopback-only speech adapter. No cloud API, telemetry, or persisted recordings."""
-import base64
 import io
 import subprocess
 import tempfile
@@ -51,7 +50,7 @@ async def local_only(request: Request, call_next):
 
 @app.get('/health')
 def health():
-    return {'status': 'ok', 'tts_installed': all((MODELS / f).exists() for f in ('kokoro-v1.0.onnx', 'voices-v1.0.bin'))}
+    return {'status': 'ok', 'asr_model': 'nemotron-speech-streaming-en-0.6b', 'language': 'en', 'tts_installed': all((MODELS / f).exists() for f in ('kokoro-v1.0.onnx', 'voices-v1.0.bin'))}
 
 
 def transcribe_audio(data: bytes) -> str:
@@ -66,19 +65,23 @@ def transcribe_audio(data: bytes) -> str:
             result = subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), '-v', 'error', '-i', str(source), '-t', '120', '-ac', '1', '-ar', '16000', '-f', 'wav', 'pipe:1'], capture_output=True, timeout=30, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
         except (subprocess.SubprocessError, OSError) as error:
             raise HTTPException(400, 'Could not decode the recording.') from error
-    payload = {'model': 'mitch-asr', 'messages': [{'role': 'user', 'content': [{'type': 'input_audio', 'input_audio': {'data': base64.b64encode(result.stdout).decode(), 'format': 'wav'}}]}], 'temperature': 0, 'max_tokens': 2048}
+    return recognize_wav(result.stdout)
+
+
+def recognize_wav(wav: bytes) -> str:
+    """Send decoded audio only to the locally managed Nemotron service."""
     try:
         with httpx.Client(timeout=120, trust_env=False) as client:
-            response = client.post('http://127.0.0.1:22131/v1/chat/completions', json=payload)
+            response = client.post('http://127.0.0.1:22131/v1/audio/transcriptions',
+                                   files={'file': ('recording.wav', wav, 'audio/wav')},
+                                   data={'language': 'en', 'response_format': 'json'})
             response.raise_for_status()
-            choice = response.json()['choices'][0]
-            if choice.get('finish_reason') == 'length':
-                raise HTTPException(502, 'Transcript exceeded the output limit. Use a shorter recording.')
-            text = choice['message']['content']
-    except (httpx.HTTPError, KeyError, ValueError) as error:
+            text = response.json()['text']
+            if not isinstance(text, str):
+                raise ValueError('Invalid transcript returned by Nemotron.')
+    except (httpx.HTTPError, KeyError, ValueError, TypeError) as error:
         raise HTTPException(503, 'Local speech recognition is unavailable. Start the local services.') from error
-    # Qwen returns language metadata followed by its transcription delimiter.
-    return text.split('<asr_text>', 1)[-1].strip()
+    return text.strip()
 
 
 @app.post('/transcribe')

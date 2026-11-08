@@ -39,3 +39,4 @@ if (!(Test-Path $python)) {
 }
 & uv pip sync --python $python (Join-Path $root 'local_runtime/requirements-lock.txt')
 if ($LASTEXITCODE -ne 0) { throw 'Speech dependency installation failed.' }
+& (Join-Path $PSScriptRoot 'setup-nemotron.ps1')

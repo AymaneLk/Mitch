@@ -1,5 +1,13 @@
 # Local voice evaluation — 8 November 2026
 
+## Active configuration: v0.6.0-local.5
+
+At the user's request, Nemotron Speech Streaming English 0.6B Q8 replaces Qwen-ASR for dictation and voice. It runs on CPU at port 22131 through the existing local speech adapter. Chat/vision remain Qwen3.5-4B; speech output remains Kokoro. English-only, no cloud fallback. The app still submits completed recordings; streaming captions and interruptions are not integrated.
+
+Validation: 220 JavaScript tests and 2 Python adapter tests passed, covering local-only upload, English language selection, invalid responses and no fallback. Actual WebM dictation passed (531ms ASR on a synthetic clip). A full local voice turn returned the correct arithmetic answer and WAV in 3.192s after recording submission. These are synthetic single-run timings, not user-microphone accuracy measurements. Qwen weights and tag v0.6.0-local.4 remain available for rollback.
+
+The sections below describe the research and earlier configurations.
+
 ## English-only update and model research
 
 As of v0.6.0-local.4, recognition is conditioned on English, replies are instructed to be English, and speech synthesis rejects non-English language selections. The current installed models remain Qwen3-ASR-0.6B and Kokoro. English WebM transcription/TTS, non-English TTS rejection, a complete local voice turn and all 220 unit tests passed. The full turn took 3.991s after restarting services; this is another single synthetic measurement, not a user-microphone accuracy result.

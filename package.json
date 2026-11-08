@@ -1,7 +1,7 @@
 {
   "name": "mitch-windows-companion",
   "productName": "Mitch",
-  "version": "0.6.0-local.4",
+  "version": "0.6.0-local.5",
   "private": true,
   "description": "Mitch, your Windows desktop companion",
   "main": "main.js",

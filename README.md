@@ -4,9 +4,9 @@ Windows Electron desktop companion with notes, reminders, dictation, screen unde
 
 ## Local AI preview
 
-Chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation uses Qwen3-ASR-0.6B Q8 on the CPU. A local Kokoro service supplies English speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
+Chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation and voice recognition use Nemotron Speech Streaming English 0.6B Q8 on the CPU. A local Kokoro service supplies English speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
 
-Version 0.6.0-local.4 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Qwen-ASR → Qwen/tools → Kokoro with manual Send turn by default and optional automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
+Version 0.6.0-local.5 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Nemotron ASR → Qwen/tools → Kokoro with manual Send turn by default and optional automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
 
 The original cloud edition remains on `main` and tag `v0.5.2-cloud`. The local edition is on `codex/local-ai-architecture`.
 
@@ -50,4 +50,6 @@ To return to the cloud edition, use the `v0.5.2-cloud` checkout. Your saved key 
 
 For Woof versus Kokoro measurements, reproduction steps and voice limitations, see [the local voice evaluation](docs/local-voice-evaluation.md).
 
-Current language policy is English-only: the ASR server uses Qwen's forced English assistant prefix, Kokoro accepts English output only, and Mitch is prompted to reply in English. Earlier French benchmark results describe historical versions.
+Current language policy is English-only: the ASR server uses the English-only Nemotron model, Kokoro accepts English output only, and Mitch is prompted to reply in English. Earlier French benchmark results describe historical versions.
+
+To roll back recognition, stop the current local services, check out tag `v0.6.0-local.4`, and restart its local services. Qwen ASR model files remain installed. The full cloud baseline remains at `v0.5.2-cloud`.

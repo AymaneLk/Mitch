@@ -65,6 +65,9 @@ for index, (speaker, (name, audio)) in enumerate(selected.items()):
 
 records = []
 with httpx.Client(timeout=120, trust_env=False) as client:
+    backend = client.get('http://127.0.0.1:22132/health').json().get('asr_model')
+    if backend and backend != 'qwen3-asr-0.6b':
+        raise RuntimeError('Comparison requires the Qwen baseline service. Restore v0.6.0-local.4 first; refusing to label Nemotron as Qwen.')
     # Warm both recognizers; exclude this request from measurement.
     warm = (OUT / 'jfk.wav').read_bytes()
     endpoints = {'qwen': 'http://127.0.0.1:22132/transcribe', 'nemotron': 'http://127.0.0.1:22133/v1/audio/transcriptions'}

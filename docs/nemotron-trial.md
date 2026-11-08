@@ -1,6 +1,6 @@
 # Nemotron English trial — 8 November 2026
 
-Conclusion: clear latency improvement on this PC, no demonstrated overall recognition accuracy improvement. Nemotron is installed for evaluation; Mitch's active speech recognizer remains Qwen3-ASR. The trial server was stopped after evaluation to release memory.
+Historical trial conclusion: clear latency improvement on this PC, no demonstrated overall recognition accuracy improvement. After this trial, the user requested replacement: v0.6.0-local.5 now uses Nemotron at port 22131 for both dictation and voice. The separate trial server at port 22133 is stopped. Qwen remains installed for rollback via v0.6.0-local.4.
 
 ## Setup
 
@@ -42,7 +42,7 @@ powershell -ExecutionPolicy Bypass -File scripts/setup-nemotron.ps1
 powershell -ExecutionPolicy Bypass -File scripts/start-nemotron-trial.ps1
 ```
 
-Wait for `http://127.0.0.1:22133/health`, with Mitch's original services running. Download `https://www.openslr.org/resources/12/test-clean.tar.gz` and the JFK WAV linked above into `test-output/asr-comparison` as `test-clean.tar.gz` and `jfk.wav`. Then:
+For the two-model comparison, run the Qwen baseline services from `v0.6.0-local.4` and retain these benchmark scripts from the newer version. The comparison script refuses to label the active Nemotron backend as Qwen. Wait for `http://127.0.0.1:22133/health`, with those original baseline services running. Download `https://www.openslr.org/resources/12/test-clean.tar.gz` and the JFK WAV linked above into `test-output/asr-comparison` as `test-clean.tar.gz` and `jfk.wav`. Then:
 
 ```powershell
 vendor/local-ai/venv/Scripts/python.exe scripts/benchmark-asr.py
