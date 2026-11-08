@@ -43,7 +43,6 @@ $('chatForm').onsubmit=e=>{e.preventDefault();chat($('message').value);};$('mess
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>chat(b.dataset.prompt));
 $('clearChat').onclick=async()=>{try{await api.resetChat();$('messages').replaceChildren();bubble('A fresh conversation. What would you like to do?');}catch(e){toast(e.message);}};
 const live=new LocalVoice({status:(state,label)=>{
-  $('sendVoice').disabled=!live.listening;
   api.voiceDisplay({type:'status',state}).catch(()=>{});
   $('voiceBar').hidden=state==='idle';$('voiceStatus').textContent=label;$('connectionLabel').textContent=state==='idle'?'Ready when you are':label;
   document.querySelectorAll('.voice-toggle').forEach(b=>{b.textContent=state==='idle'?'Start talking ↗':state==='active'?'End conversation':'Connecting…';b.disabled=['connecting','closing'].includes(state);});
@@ -68,8 +67,6 @@ api.on('tasksStopped',()=>{live.cleanup();cancelDictation();$('activity').textCo
 api.on('voiceError',message=>{live.cleanup();toast(message);});
 async function toggleVoice(){if(recorder||transcribing||dictationStarting){toast('Finish dictation before starting a conversation.');return;}if(live.state==='idle')await live.start();else await live.stop();}
 document.querySelectorAll('.voice-toggle').forEach(b=>b.onclick=toggleVoice);$('endVoice').onclick=()=>live.stop();
-$('sendVoice').onclick=()=>live.sendTurn?.();
-$('autoSendVoice').onchange=e=>{live.autoSend=e.target.checked;if(live.listening)live.change('active',live.autoSend?'Listening locally… pause or click Send':'Listening locally… click Send when finished');};
 async function toggleRecord(){
   go('dictation');
   if(recorder){recorder.stop();return;}

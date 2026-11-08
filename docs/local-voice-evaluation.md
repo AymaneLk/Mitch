@@ -1,6 +1,8 @@
 # Local voice evaluation — 8 November 2026
 
-## Active configuration: v0.6.0-local.5
+## Active configuration: v0.6.0-local.6
+
+At the user's request, manual Send turn and its toggle are removed. Voice submits automatically after 1.8 seconds of silence. The microphone selector and meter remain. Targeted voice lifecycle tests and the Electron capture-controls check passed.
 
 At the user's request, Nemotron Speech Streaming English 0.6B Q8 replaces Qwen-ASR for dictation and voice. It runs on CPU at port 22131 through the existing local speech adapter. Chat/vision remain Qwen3.5-4B; speech output remains Kokoro. English-only, no cloud fallback. The app still submits completed recordings; streaming captions and interruptions are not integrated.
 

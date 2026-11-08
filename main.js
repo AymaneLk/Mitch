@@ -336,12 +336,11 @@ async function smokeTest() {
   fs.writeFileSync(path.join(dir,'settings.png'),(await main.webContents.capturePage()).toPNG());
   if(process.argv.includes('--capture-controls-test')){
     assert.equal(await main.webContents.executeJavaScript("!!document.getElementById('microphoneInput')"),true);
-    await main.webContents.executeJavaScript("document.getElementById('autoSendVoice').checked=false;document.getElementById('autoSendVoice').dispatchEvent(new Event('change'));live.listening=true;live.change('active','Listening locally… click Send when finished');window.captureSendCount=0;live.sendTurn=()=>window.captureSendCount++;document.getElementById('sendVoice').click()");
-    assert.equal(await main.webContents.executeJavaScript('live.autoSend'),false);
-    assert.equal(await main.webContents.executeJavaScript('window.captureSendCount'),1);
+    assert.equal(await main.webContents.executeJavaScript("document.getElementById('sendVoice')===null&&document.getElementById('autoSendVoice')===null"),true);
+    await main.webContents.executeJavaScript("live.listening=true;live.change('active','Listening locally… pause when finished')");
     fs.writeFileSync(path.join(dir,'capture-controls.png'),(await main.webContents.capturePage()).toPNG());
     await main.webContents.executeJavaScript('live.cleanup()');
-    fs.writeFileSync(path.join(dir,'capture-controls-result.json'),JSON.stringify({status:'passed',checks:['local settings load','microphone selector exists','manual mode disables auto-send','Send turn button invokes capture submission','voice cleanup'],scope:'Synthetic controls; no real microphone recording.'}));
+    fs.writeFileSync(path.join(dir,'capture-controls-result.json'),JSON.stringify({status:'passed',checks:['local settings load','microphone selector exists','manual send controls removed','voice cleanup'],scope:'Synthetic controls; no real microphone recording.'}));
     return;
   }
   const computerBefore=await main.webContents.executeJavaScript('window.companion.computerStatus()');assert.equal(computerBefore.installed,true);

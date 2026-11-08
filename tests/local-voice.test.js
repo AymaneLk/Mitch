@@ -16,19 +16,12 @@ test('voice capture requests the selected microphone explicitly',async()=>{
   assert.equal(r.constraints().audio.deviceId.exact,'chosen-mic');await r.voice.stop();
 });
 test('local renderer pauses capture at silence and ignores a reply after End',async()=>{
-  const r=renderer();r.voice.autoSend=true;await r.voice.start();assert.equal(r.voice.state,'active');
+  const r=renderer();await r.voice.start();assert.equal(r.voice.state,'active');
   r.step(100,0.1);r.step(1200,0);assert.equal(r.track.enabled,true);r.step(2000,0);
   await new Promise(resolve=>setImmediate(resolve));assert.equal(r.track.enabled,false);
   await r.voice.stop();r.resolve({transcript:'hi',answer:'hello',audio:[1,2]});
   await new Promise(resolve=>setImmediate(resolve));
   assert.equal(r.track.stopped,true);assert.equal(r.voice.state,'idle');assert.equal(r.captions.length,0);assert.equal(r.errors.length,0);assert.deepEqual(r.counts(),{stops:1,releases:1});
-});
-test('manual turn preserves pauses and allows quiet recordings below the energy threshold',async()=>{
-  const r=renderer();r.voice.autoSend=false;await r.voice.start();
-  r.step(100,0.005);r.step(5000,0);assert.equal(r.track.enabled,true);
-  r.voice.sendTurn();await new Promise(resolve=>setImmediate(resolve));assert.equal(r.track.enabled,false);
-  await r.voice.stop();r.resolve({transcript:'quiet words',answer:'reply',audio:[]});
-  await new Promise(resolve=>setImmediate(resolve));assert.equal(r.errors.length,0);
 });
 test('ending during microphone acquisition stops late tracks and releases the lease',async()=>{
   const r=renderer();let release;r.api.claimMicrophone=()=>new Promise(resolve=>release=resolve);
