@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const {AI}=require('../ai');
 const {validateTool}=require('../core');
 async function run(){
-  let page='Home',playing=false,revision=0,listed=false,discovered=false;
+  let page='Home',playing=false,revision=0,listed=false,discovered=false,playbackTransitions=0;
   const calls=[];
   const observation=()=>({status:'ok',snapshot:`fixture-${++revision}`,window:{pid:42,window_id:100,title:'Spotify'},controls:[
     {control_id:'heading',name:page==='Home'?'Accueil':'Titres likés',role:'heading'},
@@ -27,11 +27,11 @@ async function run(){
       assert.ok(discovered&&args.pid===42&&args.window_id===100,'Select exact observed window IDs');return observation();
     }
     if(name==='look_at_screen')return {status:'captured',snapshot:'fixture-image',findings:`Spotify is on ${page}. A triangle Play button (Lire) means PAUSED. A Pause button means PLAYING. Current state: ${playing?'playing':'paused'}. A progress position alone does not prove playing.`};
-    if(name==='control_media'&&args.action==='play_pause'){playing=!playing;return {status:'sent',message:'Global key delivered, playback unverified.'};}
+    if(name==='control_media'&&args.action==='play_pause'){playing=!playing;playbackTransitions++;return {status:'sent',message:'Global key delivered, playback unverified.'};}
     if(name==='computer_action'){
       assert.equal(args.snapshot,`fixture-${revision}`,'Use latest observation');assert.equal(args.kind,'click');
       if(args.control_id==='liked-link'){assert.equal(args.expected_name,'Titres likés');page='Liked Songs';}
-      else if(args.control_id==='transport'){assert.equal(args.expected_name,playing?'Pause':'Lire');playing=!playing;}
+      else if(args.control_id==='transport'){assert.equal(args.expected_name,playing?'Pause':'Lire');playing=!playing;playbackTransitions++;}
       else throw Error('Unexpected target');
       return {status:'unverified',effect:'unverifiable',observation:observation()};
     }
@@ -52,15 +52,18 @@ async function run(){
   }
   for(const prompt of ['Open Spotify and go to my liked songs.','Play the song on Spotify.','Play the song on Spotify.']){
     const start=Date.now();const answer=await ai.chat(prompt,undefined,undefined,{spoken:true});
-    const result={prompt,answer,page,playing,ms:Date.now()-start,calls:[...calls]};results.push(result);console.log(JSON.stringify(result));
+    const result={prompt,answer,page,playing,playbackTransitions,ms:Date.now()-start,calls:[...calls]};results.push(result);console.log(JSON.stringify(result));
   }
   fs.mkdirSync('test-output',{recursive:true});
   fs.writeFileSync('test-output/local-desktop-reasoning.json',JSON.stringify(results,null,2));
   assert.equal(results[0].page,'Liked Songs','Must navigate, not just open Spotify');
   assert.doesNotMatch(results[0].answer,/\bplaying\b/i,'Do not invent unrelated playback');
   assert.equal(results[1].playing,true,'Must activate playback, not just describe it');
+  assert.equal(results[0].playbackTransitions,0,'Navigation must not change playback');
+  assert.equal(results[1].playbackTransitions,1,'One play request must produce exactly one playback transition, not play-pause-play');
   assert.match(results[1].answer,/\bplaying\b/i);
   assert.equal(results[2].playing,true,'An already-playing song must not be paused by a blind toggle');
+  assert.equal(results[2].playbackTransitions,1,'An already-playing request must produce no additional transition');
   assert.match(results[2].answer,/\bplaying\b/i);
   assert.ok(!results[2].calls.slice(results[1].calls.length).some(c=>c.name==='control_media'||c.name==='computer_action'),'Already-correct playback needs no input');
 }

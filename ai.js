@@ -56,20 +56,25 @@ class AI {
     this.busy=true;
     const controller=new AbortController();this.controller=controller;const signal=controller.signal;
     const input=[...this.history,{role:'user',content:image?[{type:'input_text',text},{type:'input_image',image_url:image,detail:'auto'}]:text}];
-    const evidence=new DesktopEvidence();let completionChecks=0;
+    const evidence=new DesktopEvidence();let completionChecks=0,playbackChecks=0;
+    const finish=answer=>{
+      this.history.push({role:'user',content:text},{role:'assistant',content:answer});
+      this.history=this.history.slice(-20);return answer;
+    };
     const model=this.getSettings().chatModel,taskInstructions=instructions+new Date().toString()+'\n'+desktopEvidenceInstructions+(spoken?' This is a spoken conversation. Reply in one or two short sentences unless the user asks for detail. Use plain spoken text without markdown or lists.':'');
     try {
       for(let step=0;step<40;step++) {
         signal.throwIfAborted();
-        const result=await this.request('responses',{model,...responseSpeedOptions(model),instructions:taskInstructions,store:false,input,tools,parallel_tool_calls:false},false,signal);
+        if(evidence.mediaAttempted&&playbackChecks++>=3)return finish(unverifiedReply);
+        const result=await this.request('responses',{model,...responseSpeedOptions(model),instructions:taskInstructions,store:false,input,tools:evidence.availableTools(tools),parallel_tool_calls:false},false,signal);
         signal.throwIfAborted();
         if(result.status==='failed'||result.error) throw new Error(result.error?.message||'The model could not complete this response.');
         input.push(...(result.output||[]));
         const calls=(result.output||[]).filter(x=>x.type==='function_call');
         if(!calls.length) {
           let answer=(result.output||[]).flatMap(x=>x.content||[]).filter(x=>x.type==='output_text'||x.type==='refusal').map(x=>x.text||x.refusal).join('\n');
-          if(this.getSettings().chatProvider==='local'&&(evidence.touched||spotifyCompletion(text,undefined))){
-            const review=evidence.needsObservation?{decision:'continue',reason:'There is no usable observation after the last input. Observe its result before claiming completion; do not replay input.',answer:unverifiedReply}:await this.reviewDesktop(text,input,signal,spoken);
+          if(evidence.mediaAttempted||spotifyCompletion(text,undefined)||(this.getSettings().chatProvider==='local'&&evidence.touched)){
+            const review=evidence.mediaAttempted?{decision:'continue',reason:'Playback input has already been attempted. Verify the requested state using observations only; do not send any more input.',answer:unverifiedReply}:evidence.needsObservation?{decision:'continue',reason:'There is no usable observation after the last input. Observe its result before claiming completion; do not replay input.',answer:unverifiedReply}:await this.reviewDesktop(text,input,signal,spoken);
             signal.throwIfAborted();
             if(review.decision==='continue'&&completionChecks++<2){
               input.push({role:'user',content:'Internal completion check: '+review.reason+' Continue the original request using fresh evidence, or explain the blocker. Never repeat an input whose outcome is unknown.'});
@@ -79,15 +84,14 @@ class AI {
           }
           if(!answer) throw new Error('The model returned no answer. Try again.');
           // Retain complete recent user/assistant turns, not orphaned call outputs or screenshots.
-          this.history.push({role:'user',content:text},{role:'assistant',content:answer});
-          this.history=this.history.slice(-20); return answer;
+          return finish(answer);
         }
         for(const call of calls) {
           signal.throwIfAborted();
           let output; try {
             const args=JSON.parse(call.arguments);
-            output=this.getSettings().chatProvider==='local'?evidence.guard(text,call.name,args):null;
-            if(!output)output=await this.dispatch(call.name,args,{signal,activityScope});
+            output=evidence.guard(text,call.name,args);
+            if(!output){evidence.admit(text,call.name,args);output=await this.dispatch(call.name,args,{signal,activityScope});}
           } catch(e) { output={status:'error',message:e.message}; }
           signal.throwIfAborted();
           if(this.getSettings().allowScreen===false)output=omitToolImages(output);
@@ -99,6 +103,8 @@ class AI {
       }
       throw new Error('Action limit reached. Ask me to continue with a smaller task.');
     } finally { this.busy=false;if(this.controller===controller)this.controller=null; }
+          const completed=evidence.completedPlayback(text);
+          if(completed)return finish(completed.answer);
   }
   async reviewDesktop(text,input,signal,spoken){
     let latest;

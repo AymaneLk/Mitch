@@ -2,6 +2,8 @@
 
 const mutations=new Set(['open_app','open_website','search_web','search_spotify','control_media','click_app_control','type_in_app','computer_restore_window','computer_action','computer_action_sequence','computer_input']);
 const observations=new Set(['inspect_app','look_at_screen','computer_find_window','computer_inspect_window','computer_observe']);
+const playbackInputs=new Set(['computer_action','computer_action_sequence','computer_input','click_app_control','type_in_app','control_media']);
+const verificationTools=new Set([...observations,'computer_list_windows','list_apps']);
 const unverifiedReply="I couldn't verify that the desktop task finished. Please check the app before trying again.";
 const cleanRequest=text=>text.trim().replace(/[.!?]+$/,'').replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i,'');
 // Named-song requests have additional identity requirements; do not declare
@@ -38,16 +40,31 @@ function spotifyCompletion(text,state){
 // Input delivery alone never satisfies the observation requirement. This gate
 // is deterministic; interpreting the observed outcome is a separate model check.
 class DesktopEvidence {
-  constructor(now=Date.now){this.touched=false;this.needsObservation=false;this.frames=new Map();this.now=now;}
+  constructor(now=Date.now){this.touched=false;this.needsObservation=false;this.frames=new Map();this.now=now;this.mediaAttempted=false;this.latest=null;}
+  availableTools(tools){return this.mediaAttempted?tools.filter(tool=>verificationTools.has(tool.name)):tools;}
+  admit(text,name,args){
+    // Reserve BEFORE dispatch. A timeout can follow a successful physical input;
+    // neither a new snapshot nor a different tool grants another attempt.
+    if(mediaIntent(text)&&playbackInputs.has(name)&&!['move','scroll'].includes(args.kind))this.mediaAttempted=true;
+  }
+  completedPlayback(text){
+    if(!mediaIntent(text)||this.needsObservation||!this.latest||this.now()-this.latest.created>90000)return null;
+    const completion=spotifyCompletion(text,this.latest.state);
+    return completion?.decision==='complete'?completion:null;
+  }
   guard(text,name,args){
     const intent=mediaIntent(text);
     if(!intent)return null;
-    if(name==='control_media'&&args.action==='play_pause')return {status:'error',message:'A toggle is unsafe for a play/resume/pause request without knowing the current player state. Inspect the intended player and use its observed Play or Pause control only if needed.'};
+    const blocked=message=>({status:'error',input_suppressed:true,message});
+    if(this.mediaAttempted&&!verificationTools.has(name))return blocked('Playback input was already attempted for this request. Verification is read-only: inspect its result, but do not click, press a key, switch input tools, or replay an uncertain action.');
+    if(name==='control_media')return blocked('Use the intended player\'s observed Play or Pause button. A global media key does not express the requested playback state and can toggle the wrong way.');
+    if(name==='computer_action_sequence'&&(args.actions?.length!==1||args.actions[0].kind!=='click'))return blocked('Use one observed playback click. A sequence of inputs can reverse playback more than once.');
+    if(name==='type_in_app'||(['computer_input','computer_action'].includes(name)&&['type','double_click','right_click','drag'].includes(args.kind)))return blocked('This simple playback request permits one click or keyboard input, not text entry, a drag or multiple clicks.');
     const cached=this.frames.get(args.snapshot),frame=cached?.state;
     if(!frame||this.now()-cached.created>90000||!/spotify/i.test(frame.window?.title||''))return null;
-    const clicks=name==='computer_action_sequence'?args.actions:name==='computer_action'?[args]:[];
+    const clicks=name==='computer_action_sequence'?args.actions:name==='computer_action'?[args]:name==='click_app_control'?[{...args,kind:'click'}]:[];
     for(const click of clicks||[]){
-      const control=frame.controls.find(c=>c.control_id===click.control_id&&c.name===click.expected_name);
+      const control=frame.controls.find(c=>(c.control_id??c.id)===click.control_id&&c.name===click.expected_name);
       if(click.kind!=='click'||!control||!/button/i.test(control.type||control.role||''))continue;
       const opposite=intent==='pause'?/^(play|lire)$/i:/^(pause|mettre en pause)$/i;
       if(opposite.test(control.name))return {status:'not_needed',message:`No input was sent. The observed ${control.name} button offers the opposite of the requested action. Playback is already ${intent==='pause'?'paused':'playing'}.`,observation:frame};
@@ -57,10 +74,11 @@ class DesktopEvidence {
   record(name,output){
     if(!mutations.has(name)&&!observations.has(name))return;
     this.touched=true;
-    if(output?.status==='not_needed')return;
-    if(mutations.has(name)){this.needsObservation=true;this.frames.clear();}
+    if(output?.status==='not_needed'||output?.input_suppressed)return;
+    if(mutations.has(name)){this.needsObservation=true;this.frames.clear();this.latest=null;}
     const state=output?.observation??output;
     if(output?.status==='error'||!state?.snapshot)return;
+    this.latest={state,created:this.now()};
     if(state.controls?.length){this.frames.clear();this.frames.set(state.snapshot,{state,created:this.now()});}
     if(state.controls?.length||state._images?.length||output?._images?.length||(name==='look_at_screen'&&state.findings))this.needsObservation=false;
   }
