@@ -36,6 +36,7 @@ class AI {
       signal?.throwIfAborted();
       return localResponse(this.fetch,this.getSettings(),body,signal?AbortSignal.any([signal,AbortSignal.timeout(120000)]):AbortSignal.timeout(120000));
     }
+    if(this.getSettings().localOnly)throw new Error('Cloud AI is disabled in this local edition.');
     const key=await this.getKey(); if(!key) throw new Error('Add your OpenAI API key in Settings first.');
     signal?.throwIfAborted();
     // Check at the send boundary, including a revocation while key retrieval

@@ -21,7 +21,7 @@ async function loadState(){
   $('setupBanner').hidden=configured;$('setupBanner').style.display=configured?'none':'flex';
   $('keyStatus').textContent=currentState.hasKey?'Saved securely':'Not connected';$('apiKey').placeholder=currentState.hasKey?'Leave blank to keep your saved key':'Paste your API key';
   for(const key of ['voiceModel','chatModel','transcriptionModel'])$(key).value=s[key];
-  for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl'])$(key).value=s[key];
+  for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage'])$(key).value=s[key];
   for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])$(key).checked=s[key];
   $('screenId').replaceChildren(...currentState.screens.map(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=`${d.label} · ${d.width} × ${d.height}`;return o;}));
   if(s.screenId)$('screenId').value=s.screenId;
@@ -34,7 +34,7 @@ $('stopTasks').onclick=async()=>{try{await api.stopTasks();toast('Tasks stopped.
 $('checkComputer').onclick=async()=>{const button=$('checkComputer');button.disabled=true;$('computerResult').textContent='Checking…';try{const state=await api.checkComputer();renderComputerStatus(state);$('computerResult').textContent=`Connected. Found ${state.windowsFound} open windows.`;}catch(e){$('computerResult').textContent=e.message;}finally{renderComputerStatus(await api.computerStatus());}};
 $('resumeComputer').onclick=async()=>{try{renderComputerStatus(await api.resumeComputer());$('computerResult').textContent='Ready for a new request.';}catch(e){toast(e.message);}};
 api.on('computerState',renderComputerStatus);
-$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={key:$('apiKey').value.trim(),screenId:$('screenId').value};for(const key of ['voiceModel','chatModel','transcriptionModel','chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])values[key]=$(key).checked;await api.saveSettings(values);$('apiKey').value='';$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
+$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={key:$('apiKey').value.trim(),screenId:$('screenId').value};for(const key of ['voiceModel','chatModel','transcriptionModel','chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])values[key]=$(key).checked;await api.saveSettings(values);$('apiKey').value='';$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
 $('removeKey').onclick=async()=>{await api.deleteKey();$('apiKey').value='';await loadState();toast('Saved key removed.');};
 $('calendarImport').onclick=async()=>{try{const r=await api.chooseCalendar();if(r.status==='imported'){toast('Calendar imported.');loadState();}}catch(e){toast(e.message);}};
 function bubble(text,who='assistant',error=false){$('emptyChat')?.remove();const b=document.createElement('div');b.className='bubble '+who+(error?' error':'');const label=document.createElement('span');label.className='speaker';label.textContent=who==='user'?'YOU':'MITCH';b.append(label,document.createTextNode(text));$('messages').append(b);$('messages').scrollTop=$('messages').scrollHeight;return b;}
@@ -42,7 +42,7 @@ async function chat(text){if(chatBusy||!text.trim())return;chatBusy=true;$('send
 $('chatForm').onsubmit=e=>{e.preventDefault();chat($('message').value);};$('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chat($('message').value);}};
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>chat(b.dataset.prompt));
 $('clearChat').onclick=async()=>{try{await api.resetChat();$('messages').replaceChildren();bubble('A fresh conversation. What would you like to do?');}catch(e){toast(e.message);}};
-const live=new LiveVoice({status:(state,label)=>{
+const live=new LocalVoice({status:(state,label)=>{
   api.voiceDisplay({type:'status',state}).catch(()=>{});
   $('voiceBar').hidden=state==='idle';$('voiceStatus').textContent=label;$('connectionLabel').textContent=state==='idle'?'Ready when you are':label;
   document.querySelectorAll('.voice-toggle').forEach(b=>{b.textContent=state==='idle'?'Start talking ↗':state==='active'?'End conversation':'Connecting…';b.disabled=['connecting','closing'].includes(state);});

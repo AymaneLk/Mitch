@@ -6,6 +6,8 @@ const {spawn}=require('node:child_process');
 const {tools,Store,SnapshotCache,createDispatcher,webURL,isoDate}=require('./core');
 const {AI}=require('./ai');
 const {localURL}=require('./local-ai');
+const {LocalConversation}=require('./local-conversation');
+let localConversation;
 const {openSpotifySearch,normalizeSpotifyWebURL}=require('./spotify');
 const {CuaClient}=require('./cua-client');
 const {ComputerUse}=require('./computer-use');
@@ -109,6 +111,7 @@ function setInk(value) {
 function requireDesktop() { if(!store.data.settings.allowDesktop) throw new Error('Enable desktop actions in Settings first.');if(computer?.paused)throw new Error('Computer use is paused. Click Resume computer use in Settings.'); }
 function computerStatus() {return {installed:fs.existsSync(cua.executable),running:cua.running,version:cua.version||null,paused:computer.paused,enabled:store.data.settings.allowDesktop,administrator};}
 async function stopTasks() {
+  localConversation?.stop();
   updateVoiceDisplay({type:'status',state:'idle'});
   ai?.cancel();dispatch?.cancel();voiceController.abort();voiceController=new AbortController();voiceGeneration++;voiceActive=false;voiceCalls.clear();
   desktopActivity?.stop();voiceActivityScope=null;
@@ -224,6 +227,9 @@ function handle(name,fn,pages=['index.html']) {
   });
 }
 function registerIPC() {
+  handle('localVoiceStart',()=>{if(ai.busy)throw new Error('Wait for the current reply.');return localConversation.start();});
+  handle('localVoiceStop',()=>{localConversation.stop();return {status:'stopped'};});
+  handle('localVoiceTurn',async(data,generation)=>{const scope=desktopActivity.beginScope();try{return await localConversation.turn(Buffer.from(data),generation,scope);}finally{desktopActivity.endScope(scope);}});
   handle('voiceDisplay',updateVoiceDisplay);
   handle('petState',()=>petPresentation.snapshot(),['pet.html']);
   handle('wakeStatus',()=>wake.status());
@@ -247,10 +253,11 @@ function registerIPC() {
     const desktopWasEnabled=store.data.settings.allowDesktop,wakeWasEnabled=store.data.settings.wakeEnabled;
     store.data.settings={voiceModel:values.voiceModel,chatModel:values.chatModel,transcriptionModel:values.transcriptionModel,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
     Object.assign(store.data.settings,localSettings);
+    Object.assign(store.data.settings,{localOnly:true,chatProvider:'local',transcriptionProvider:'local',localVoiceLanguage:values.localVoiceLanguage==='fr-fr'?'fr-fr':'en-us'});
     store.save();if(desktopWasEnabled&&!values.allowDesktop)await stopTasks();
-    await wake.configure({enabled:values.wakeEnabled,available:!!apiKey});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
+    await wake.configure({enabled:values.wakeEnabled,available:true});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
   });
-  handle('deleteKey',async()=>{apiKey='';store.data.encryptedKey='';store.save();await wake.configure({enabled:store.data.settings.wakeEnabled,available:false});stateChanged();return {status:'removed'};});
+  handle('deleteKey',async()=>{apiKey='';store.data.encryptedKey='';store.save();await wake.configure({enabled:store.data.settings.wakeEnabled,available:true});stateChanged();return {status:'removed'};});
   handle('chat',async text=>{const scope=desktopActivity.beginScope();try{return await ai.chat(text,undefined,scope);}finally{desktopActivity.endScope(scope);}});
   handle('resetChat',()=>{if(ai.busy)throw new Error('Wait for the current reply.');ai.history=[];return {status:'cleared'};});
   handle('voiceOffer',sdp=>ai.voice(sdp));
@@ -451,9 +458,9 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     if(store.data.encryptedKey){try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedKey,'base64'));apiKey=unlocked.result;if(unlocked.shouldReEncrypt){store.data.encryptedKey=(await safeStorage.encryptStringAsync(apiKey)).toString('base64');store.save();}}catch{dialog.showErrorBox('API key unavailable','Windows could not unlock the saved key. Enter it again in Settings.');}}
     session.defaultSession.setPermissionRequestHandler((contents,permission,callback,details)=>callback(permission==='media'&&localPages.has(contents.getURL())&&contents===main?.webContents&&!details.mediaTypes?.includes('video')));
     session.defaultSession.setPermissionCheckHandler((contents,permission)=>permission==='media'&&contents===main?.webContents&&localPages.has(contents.getURL()));
-    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch);ai.onVoiceError=failVoice;registerIPC();makeWindows();
+    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch);localConversation=new LocalConversation(ai,()=>store.data.settings);ai.onVoiceError=failVoice;registerIPC();makeWindows();
     main.webContents.on('render-process-gone',()=>stopTasks().catch(()=>{}));
-    main.webContents.once('did-finish-load',()=>{if(!smoke)wake.configure({enabled:store.data.settings.wakeEnabled,available:!!apiKey}).catch(error=>send('notice',error.message));});
+    main.webContents.once('did-finish-load',()=>{if(!smoke)wake.configure({enabled:store.data.settings.wakeEnabled,available:true}).catch(error=>send('notice',error.message));});
     setInterval(()=>{const due=store.due();for(const item of due){if(Notification.isSupported())new Notification({title:'Mitch reminder',body:item.title}).show();send('notice',item.title);}if(due.length)stateChanged();},1000).unref();
     if(smoke){await new Promise(r=>main.webContents.once('did-finish-load',r));await smokeTest();}
   }).catch(error=>{fs.mkdirSync(path.join(process.cwd(),'test-output'),{recursive:true});fs.writeFileSync(path.join(process.cwd(),'test-output','startup-error.txt'),error.stack);if(!smoke)dialog.showErrorBox('Companion could not start',error.message);app.exit(1);});
