@@ -1,0 +1,67 @@
+{
+  "dataset": "LibriSpeech test-clean, first qualifying clip per speaker in archive order; 20 speakers",
+  "archive_sha256": "39fde525e59672dc6d1551919b1478f724438a95aa55f874b576be21967e6c23",
+  "conditions": "Warm CPU servers; single request at a time; Qwen includes ffmpeg adapter overhead; case/punctuation normalization only; noise is synthetic white noise at 10dB SNR; quiet is amplitude x0.05.",
+  "groups": [
+    {
+      "variant": "clean",
+      "model": "qwen",
+      "clips": 20,
+      "words": 329,
+      "errors": 6,
+      "wer_percent": 1.82,
+      "median_seconds": 1.176,
+      "mean_seconds": 1.332
+    },
+    {
+      "variant": "clean",
+      "model": "nemotron",
+      "clips": 20,
+      "words": 329,
+      "errors": 8,
+      "wer_percent": 2.43,
+      "median_seconds": 0.451,
+      "mean_seconds": 0.501
+    },
+    {
+      "variant": "quiet",
+      "model": "qwen",
+      "clips": 5,
+      "words": 82,
+      "errors": 2,
+      "wer_percent": 2.44,
+      "median_seconds": 1.194,
+      "mean_seconds": 1.252
+    },
+    {
+      "variant": "quiet",
+      "model": "nemotron",
+      "clips": 5,
+      "words": 82,
+      "errors": 1,
+      "wer_percent": 1.22,
+      "median_seconds": 0.513,
+      "mean_seconds": 0.459
+    },
+    {
+      "variant": "noise_10db",
+      "model": "qwen",
+      "clips": 5,
+      "words": 82,
+      "errors": 2,
+      "wer_percent": 2.44,
+      "median_seconds": 1.331,
+      "mean_seconds": 1.219
+    },
+    {
+      "variant": "noise_10db",
+      "model": "nemotron",
+      "clips": 5,
+      "words": 82,
+      "errors": 1,
+      "wer_percent": 1.22,
+      "median_seconds": 0.484,
+      "mean_seconds": 0.484
+    }
+  ]
+}

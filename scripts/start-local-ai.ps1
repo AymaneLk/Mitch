@@ -9,7 +9,12 @@ if ($Stop) {
   if (Test-Path $pidFile) {
     foreach ($entry in (Get-Content $pidFile -Raw | ConvertFrom-Json)) {
       $process = Get-Process -Id $entry.pid -ErrorAction SilentlyContinue
-      if ($process -and $process.Path -eq [IO.Path]::GetFullPath($entry.path) -and $process.StartTime.ToUniversalTime().ToString('o') -eq $entry.started) { & taskkill.exe /PID $entry.pid /T /F | Out-Null }
+      if ($process) {
+        if ($process.Path -ne [IO.Path]::GetFullPath($entry.path) -or $process.StartTime.ToUniversalTime().Ticks -ne ([DateTimeOffset]$entry.started).UtcDateTime.Ticks) { throw 'Tracked PID no longer identifies this local service; refusing to stop it.' }
+        & taskkill.exe /PID $entry.pid /T /F | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Could not stop the tracked local service.' }
+        if (!$process.WaitForExit(5000)) { throw 'Local service has not exited yet.' }
+      }
     }
     Remove-Item -LiteralPath $pidFile
   }
