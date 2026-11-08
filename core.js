@@ -83,6 +83,7 @@ class Store {
       const saved = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       this.data = { ...this.data, ...saved, settings: { ...this.data.settings, ...saved.settings } };
     }
+    this.data.settings={chatProvider:'openai',transcriptionProvider:'openai',localChatModel:'mitch-local',localChatUrl:'http://127.0.0.1:22130/v1',localSpeechUrl:'http://127.0.0.1:22132',...this.data.settings};
   }
   save() { fs.writeFileSync(this.file+'.tmp', JSON.stringify(this.data,null,2)); fs.renameSync(this.file+'.tmp',this.file); }
   add(collection, value) { const item = { id:crypto.randomUUID(),created:new Date().toISOString(),...value }; this.data[collection].push(item); this.save(); return item; }

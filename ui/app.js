@@ -17,9 +17,11 @@ document.querySelector('.brand').onclick=e=>{e.preventDefault();go('home');};
 async function loadState(){
   currentState=await api.state();const s=currentState.settings;
   document.querySelector('.version').textContent='PREVIEW '+currentState.version;
-  $('setupBanner').hidden=currentState.hasKey;$('setupBanner').style.display=currentState.hasKey?'none':'flex';
+  const configured=currentState.hasKey||(s.chatProvider==='local'&&s.transcriptionProvider==='local');
+  $('setupBanner').hidden=configured;$('setupBanner').style.display=configured?'none':'flex';
   $('keyStatus').textContent=currentState.hasKey?'Saved securely':'Not connected';$('apiKey').placeholder=currentState.hasKey?'Leave blank to keep your saved key':'Paste your API key';
   for(const key of ['voiceModel','chatModel','transcriptionModel'])$(key).value=s[key];
+  for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl'])$(key).value=s[key];
   for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])$(key).checked=s[key];
   $('screenId').replaceChildren(...currentState.screens.map(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=`${d.label} · ${d.width} × ${d.height}`;return o;}));
   if(s.screenId)$('screenId').value=s.screenId;
@@ -32,7 +34,7 @@ $('stopTasks').onclick=async()=>{try{await api.stopTasks();toast('Tasks stopped.
 $('checkComputer').onclick=async()=>{const button=$('checkComputer');button.disabled=true;$('computerResult').textContent='Checking…';try{const state=await api.checkComputer();renderComputerStatus(state);$('computerResult').textContent=`Connected. Found ${state.windowsFound} open windows.`;}catch(e){$('computerResult').textContent=e.message;}finally{renderComputerStatus(await api.computerStatus());}};
 $('resumeComputer').onclick=async()=>{try{renderComputerStatus(await api.resumeComputer());$('computerResult').textContent='Ready for a new request.';}catch(e){toast(e.message);}};
 api.on('computerState',renderComputerStatus);
-$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={key:$('apiKey').value.trim(),screenId:$('screenId').value};for(const key of ['voiceModel','chatModel','transcriptionModel'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])values[key]=$(key).checked;await api.saveSettings(values);$('apiKey').value='';$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
+$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={key:$('apiKey').value.trim(),screenId:$('screenId').value};for(const key of ['voiceModel','chatModel','transcriptionModel','chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])values[key]=$(key).checked;await api.saveSettings(values);$('apiKey').value='';$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
 $('removeKey').onclick=async()=>{await api.deleteKey();$('apiKey').value='';await loadState();toast('Saved key removed.');};
 $('calendarImport').onclick=async()=>{try{const r=await api.chooseCalendar();if(r.status==='imported'){toast('Calendar imported.');loadState();}}catch(e){toast(e.message);}};
 function bubble(text,who='assistant',error=false){$('emptyChat')?.remove();const b=document.createElement('div');b.className='bubble '+who+(error?' error':'');const label=document.createElement('span');label.className='speaker';label.textContent=who==='user'?'YOU':'MITCH';b.append(label,document.createTextNode(text));$('messages').append(b);$('messages').scrollTop=$('messages').scrollHeight;return b;}
@@ -62,7 +64,7 @@ async function toggleRecord(){
   if(live.state!=='idle'){toast('End your voice conversation before dictating.');return;}
   const generation=++dictationGeneration;dictationStarting=true;let ownedLease;
   try{
-    const state=await api.state();if(!state.hasKey){go('settings');toast('Add your API key to start dictation.');return;}
+    const state=await api.state();if(!state.hasKey&&state.settings.transcriptionProvider!=='local'){go('settings');toast('Add your API key or select local dictation in Settings.');return;}
     if(generation!==dictationGeneration)return;
     ownedLease=await api.claimMicrophone('dictation');if(generation!==dictationGeneration){releaseDictation(ownedLease);return;}dictationLease=ownedLease;
     const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:false});

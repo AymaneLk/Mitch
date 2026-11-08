@@ -1,0 +1,46 @@
+# Mitch
+
+Windows Electron desktop companion with notes, reminders, dictation, screen understanding, and Cua desktop tools.
+
+## Local AI preview
+
+Chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation uses Qwen3-ASR-0.6B Q8 on the CPU. A local Kokoro service supplies English/French speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
+
+**Live conversations and voice wake still use the existing OpenAI live path.** Kokoro is tested as a service but is not yet connected to live conversations. Pipecat, Silero and SmartTurn are not integrated in this phase. OmniRoute remains a separate optional service and is not in the local request path.
+
+### Setup (Windows NVIDIA)
+
+Requires Node/npm, uv, Python 3.12 (managed by uv), and a compatible NVIDIA driver. Tested on RTX 4060 8GB / 32GB RAM. GPU memory was about 7.4GB in the test environment, so other GPU applications may cause contention.
+
+```powershell
+npm ci
+npm run setup:cua
+powershell -ExecutionPolicy Bypass -File scripts/setup-local-ai.ps1
+powershell -ExecutionPolicy Bypass -File scripts/start-local-ai.ps1
+npm start
+```
+
+Allow services to load. In Settings select Local for both chat and dictation. Defaults: chat `http://127.0.0.1:22130/v1`, model `mitch-local`, speech `http://127.0.0.1:22132`. ASR internally listens on port 22131. All three services bind to loopback. Health endpoints: chat/ASR `/health`, speech `/health`. No cloud key is sent to these endpoints. Local dictation returns the raw transcript without cloud formatting.
+
+Model revisions/checksums and Python dependency versions are pinned under `local_runtime`. Downloads and environments stay under ignored `vendor/local-ai`; packaging excludes this directory. Packaged Mitch can use services started from this checkout. Services do not automatically start after reboot. Stop them with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/start-local-ai.ps1 -Stop
+```
+
+### Verification
+
+With services running:
+
+```powershell
+npm test
+npm run smoke
+vendor/local-ai/venv/Scripts/python.exe scripts/test-local-speech.py
+node scripts/test-local-ai.js
+```
+
+Speech tests generate synthetic English/French audio and a controlled vision fixture; run them before the local AI test. AI tests use a mock note dispatcher, not your notes. Results go to ignored `test-output`. Tests cover actual model chat, tool selection, image recognition, WebM transcription and Kokoro output. They do not establish microphone quality, long-session reliability or live conversation latency.
+
+Initial verification on 2026-11-08: 213 unit tests and desktop smoke passed. Local chat ~1.7s, tool round trip ~1.0s, controlled vision ~0.5s, short synthetic ASR clips ~1.1–1.6s. These are single-run measurements, not performance guarantees.
+
+To return to cloud chat/dictation, select OpenAI in Settings. Your saved key is preserved. Local models are smaller than the previous cloud models; review their actions and use Stop when needed.

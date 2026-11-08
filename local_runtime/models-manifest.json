@@ -1,0 +1,26 @@
+[
+    {
+        "revision":  "e87f176479d0855a907a41277aca2f8ee7a09523",
+        "sha256":  "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+        "file":  "Qwen3.5-4B-Q4_K_M.gguf",
+        "repository":  "unsloth/Qwen3.5-4B-GGUF"
+    },
+    {
+        "revision":  "e87f176479d0855a907a41277aca2f8ee7a09523",
+        "sha256":  "cd88edcf8d031894960bb0c9c5b9b7e1fea6ebee02b9f7ce925a00d12891f864",
+        "file":  "mmproj-F16.gguf",
+        "repository":  "unsloth/Qwen3.5-4B-GGUF"
+    },
+    {
+        "revision":  "928ab958557df9aa2ef1c93e0e83c7ad0933fae2",
+        "sha256":  "bca259818b50ca7c4c05e9bdb35a5dc04fa039653a6d6f3f0f331f96f6aa1971",
+        "file":  "Qwen3-ASR-0.6B-Q8_0.gguf",
+        "repository":  "ggml-org/Qwen3-ASR-0.6B-GGUF"
+    },
+    {
+        "revision":  "928ab958557df9aa2ef1c93e0e83c7ad0933fae2",
+        "sha256":  "41a342b5e4c514e968cb756de6cd1b7be39eff43c44c57a2ef5fc6522e36603d",
+        "file":  "mmproj-Qwen3-ASR-0.6B-Q8_0.gguf",
+        "repository":  "ggml-org/Qwen3-ASR-0.6B-GGUF"
+    }
+]

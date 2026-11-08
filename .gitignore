@@ -6,3 +6,5 @@ outputs/
 vendor/
 .env*
 *.log
+__pycache__/
+*.pyc

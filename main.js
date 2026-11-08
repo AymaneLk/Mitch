@@ -5,6 +5,7 @@ const {pathToFileURL}=require('node:url');
 const {spawn}=require('node:child_process');
 const {tools,Store,SnapshotCache,createDispatcher,webURL,isoDate}=require('./core');
 const {AI}=require('./ai');
+const {localURL}=require('./local-ai');
 const {openSpotifySearch,normalizeSpotifyWebURL}=require('./spotify');
 const {CuaClient}=require('./cua-client');
 const {ComputerUse}=require('./computer-use');
@@ -236,11 +237,16 @@ function registerIPC() {
   handle('state',()=>({version:app.getVersion(),settings:{...store.data.settings,screenId:String(targetDisplay().id)},hasKey:!!apiKey,screens:screen.getAllDisplays().map(d=>({id:String(d.id),label:d.label||`Display ${d.id}`,width:d.size.width,height:d.size.height})),calendar:fs.existsSync(path.join(app.getPath('userData'),'calendar.ics')),voiceActive}));
   handle('saveSettings',async values=>{
     if(!values||typeof values!=='object')throw new Error('Invalid settings.');
+    for(const key of ['chatProvider','transcriptionProvider'])if(values[key]!==undefined&&!['openai','local'].includes(values[key]))throw new Error('Invalid AI provider.');
+    const localSettings={chatProvider:values.chatProvider||'openai',transcriptionProvider:values.transcriptionProvider||'openai',localChatModel:values.localChatModel||'mitch-local',localChatUrl:values.localChatUrl||'http://127.0.0.1:22130/v1',localSpeechUrl:values.localSpeechUrl||'http://127.0.0.1:22132'};
+    localURL(localSettings.localChatUrl,'chat/completions');localURL(localSettings.localSpeechUrl,'transcribe');
+    if(!/^[a-zA-Z0-9._/-]{1,160}$/.test(localSettings.localChatModel))throw new Error('Invalid local model name.');
     for(const key of ['voiceModel','chatModel','transcriptionModel']) {if(typeof values[key]!=='string'||!/^[a-zA-Z0-9._-]{1,80}$/.test(values[key]))throw new Error('Invalid model name.');}
     if(values.key){if(typeof values.key!=='string'||values.key.length>500||/\s/.test(values.key))throw new Error('Invalid API key.');if(!await safeStorage.isAsyncEncryptionAvailable())throw new Error('Windows secure storage is unavailable.');store.data.encryptedKey=(await safeStorage.encryptStringAsync(values.key)).toString('base64');apiKey=values.key;}
     if(store.data.settings.screenId!==String(values.screenId||'')){shapes=[];screenSnapshot.value=null;updateOverlay();}
     const desktopWasEnabled=store.data.settings.allowDesktop,wakeWasEnabled=store.data.settings.wakeEnabled;
     store.data.settings={voiceModel:values.voiceModel,chatModel:values.chatModel,transcriptionModel:values.transcriptionModel,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
+    Object.assign(store.data.settings,localSettings);
     store.save();if(desktopWasEnabled&&!values.allowDesktop)await stopTasks();
     await wake.configure({enabled:values.wakeEnabled,available:!!apiKey});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
   });
@@ -307,6 +313,14 @@ async function smokeTest() {
   const png=await main.webContents.capturePage();fs.writeFileSync(path.join(dir,'home.png'),png.toPNG());
   await main.webContents.executeJavaScript("document.querySelector('[data-page=settings]').click()");
   await new Promise(r=>setTimeout(r,100));
+  await main.webContents.executeJavaScript('window.companion.saveSettings('+JSON.stringify({...state.settings,chatProvider:'local',transcriptionProvider:'local'})+')');
+  const localState=await main.webContents.executeJavaScript('window.companion.state()');
+  assert.equal(localState.settings.chatProvider,'local');assert.equal(localState.settings.transcriptionProvider,'local');
+  await main.webContents.executeJavaScript('loadState()');
+  assert.equal(await main.webContents.executeJavaScript("document.getElementById('chatProvider').value"),'local');
+  assert.equal(await main.webContents.executeJavaScript("document.getElementById('setupBanner').hidden"),true);
+  await main.webContents.executeJavaScript('window.companion.saveSettings('+JSON.stringify(state.settings)+')');
+  await main.webContents.executeJavaScript('loadState()');
   fs.writeFileSync(path.join(dir,'settings.png'),(await main.webContents.capturePage()).toPNG());
   const computerBefore=await main.webContents.executeJavaScript('window.companion.computerStatus()');assert.equal(computerBefore.installed,true);
   if(app.isPackaged)assert.equal(computerBefore.administrator,true,'Packaged Mitch must launch as Administrator.');

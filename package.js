@@ -10,7 +10,7 @@ async function build() {
     overwrite: true, asar: {unpack: '{windows,wake-word}.ps1', unpackDir: 'vendor'}, prune: true,
     icon: path.join(__dirname, 'assets/companion.ico'), appVersion: require('./package.json').version,
     download: {cacheRoot: path.join(__dirname, '.electron-cache')},
-    ignore: [/^\/(?:tests|test-output|outputs|scripts|\.npm-cache|\.electron-cache|\.git)(?:\/|$)/, /^\/(?:build-icon|package)\.js$/],
+    ignore: [/^\/(?:tests|test-output|outputs|scripts|local_runtime|\.npm-cache|\.electron-cache|\.git)(?:\/|$)/, /^\/vendor\/local-ai(?:\/|$)/, /^\/(?:build-icon|package)\.js$/],
     win32metadata: {CompanyName:'Independent recreation', FileDescription:'Mitch Windows desktop companion', ProductName:'Mitch', 'requested-execution-level':'requireAdministrator'},
   });
   for (const result of results) {
