@@ -258,7 +258,7 @@ function registerIPC() {
     const desktopWasEnabled=store.data.settings.allowDesktop,wakeWasEnabled=store.data.settings.wakeEnabled;
     store.data.settings={voiceModel:values.voiceModel,chatModel:values.chatModel,transcriptionModel:values.transcriptionModel,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
     Object.assign(store.data.settings,localSettings);
-    Object.assign(store.data.settings,{localOnly:true,chatProvider:'local',transcriptionProvider:'local',localVoiceLanguage:values.localVoiceLanguage==='fr-fr'?'fr-fr':'en-us'});
+    Object.assign(store.data.settings,{localOnly:true,chatProvider:'local',transcriptionProvider:'local',localVoiceLanguage:'en-us'});
     store.save();if(desktopWasEnabled&&!values.allowDesktop)await stopTasks();
     await wake.configure({enabled:values.wakeEnabled,available:true});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
   });

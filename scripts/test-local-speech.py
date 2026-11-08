@@ -22,7 +22,6 @@ results = []
 with httpx.Client(timeout=120, trust_env=False) as client:
     for language, text, expected in [
         ('en-us', 'Hello Mitch. Please create a note called groceries. Buy apples and bread.', ['apples', 'bread']),
-        ('fr-fr', 'Bonjour Mitch. Je voudrais acheter des pommes et du pain.', ['pommes', 'pain']),
     ]:
         started = time.monotonic()
         response = client.post('http://127.0.0.1:22132/speech', json={'text': text, 'language': language})
@@ -43,4 +42,5 @@ with httpx.Client(timeout=120, trust_env=False) as client:
         print(json.dumps(result, ensure_ascii=True), flush=True)
     denied = client.post('http://127.0.0.1:22132/speech', headers={'Origin': 'https://example.com'}, json={'text': 'blocked'})
     assert denied.status_code == 403
+    assert client.post('http://127.0.0.1:22132/speech', json={'text': 'Bonjour', 'language': 'fr-fr'}).status_code == 400
 (output / 'local-speech-results.json').write_text(json.dumps(results, indent=2, ensure_ascii=False), encoding='utf-8')

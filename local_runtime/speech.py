@@ -96,8 +96,8 @@ class SpeechRequest(BaseModel):
 @app.post('/speech')
 def synthesize(request: SpeechRequest):
     global kokoro
-    if request.language not in ('en-us', 'fr-fr'):
-        raise HTTPException(400, 'This preview supports English and French speech only.')
+    if request.language != 'en-us':
+        raise HTTPException(400, 'Mitch is configured for English speech only.')
     with speech_lock:
         if kokoro is None:
             from kokoro_onnx import Kokoro
@@ -108,7 +108,7 @@ def synthesize(request: SpeechRequest):
             options.intra_op_num_threads = 4
             session = ort.InferenceSession(str(MODELS / 'kokoro-v1.0.onnx'), sess_options=options, providers=['CPUExecutionProvider'])
             kokoro = Kokoro.from_session(ModelTypedSession(session), str(MODELS / 'voices-v1.0.bin'))
-        samples, rate = kokoro.create(request.text, voice='ff_siwis' if request.language == 'fr-fr' else 'af_heart', speed=1.0, lang=request.language)
+        samples, rate = kokoro.create(request.text, voice='af_heart', speed=1.0, lang='en-us')
     output = io.BytesIO()
     sf.write(output, samples, rate, format='WAV')
     return Response(output.getvalue(), media_type='audio/wav')

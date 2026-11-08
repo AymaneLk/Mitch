@@ -1,5 +1,23 @@
 # Local voice evaluation — 8 November 2026
 
+## English-only update and model research
+
+As of v0.6.0-local.4, recognition is conditioned on English, replies are instructed to be English, and speech synthesis rejects non-English language selections. The current installed models remain Qwen3-ASR-0.6B and Kokoro. English WebM transcription/TTS, non-English TTS rejection, a complete local voice turn and all 220 unit tests passed. The full turn took 3.991s after restarting services; this is another single synthetic measurement, not a user-microphone accuracy result.
+
+The Qwen ASR template uses the official `language English<asr_text>` assistant prefix. Reference: [Qwen inference implementation](https://github.com/QwenLM/Qwen3-ASR/blob/main/qwen_asr/inference/qwen3_asr.py).
+
+Research shortlist (not installed or benchmarked on this PC):
+
+- [NVIDIA Nemotron Speech Streaming English 0.6B](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b): recommended next trial for real-time English recognition. Supports 80/160/560/1120ms chunks; NVIDIA reports 6.93% average WER at 1120ms and 7.67% at 160ms. Chunk duration is not total conversation latency.
+- [NVIDIA Canary-Qwen 2.5B](https://huggingface.co/nvidia/canary-qwen-2.5b): accuracy-first English candidate, with reported average WER 5.63%. Larger model and less attractive for simultaneous GPU residency: this machine's 8GB RTX 4060 was already using ~7.1GB with Mitch running.
+- [NVIDIA Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2): English-focused candidate for completed utterances, with reported average WER 6.05%.
+
+[NeMo-Speech.cpp](https://github.com/NVIDIA/NeMo-Speech.cpp) now documents native Windows installation, CPU/GPU ASR and a streaming server. This makes Nemotron a credible integration candidate, but performance must be measured on this machine with representative human speech. These model-card scores do not establish equivalence to Mitch's previous OpenAI live model; we have no matched recordings or cloud baseline for that comparison. Moving closer to the old live experience also requires streaming transport, reliable end-of-turn detection and interruption handling.
+
+The separate [Nemotron Labs VoiceChat full-duplex model](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/main/docs/s2s/README.md) requires at least 16GB of GPU-accessible memory in its recommended configuration. It is not the same as the 0.6B streaming recognizer and is not recommended for direct deployment on this 8GB GPU.
+
+The evaluation sections below describe the earlier multilingual versions where applicable.
+
 The original cloud edition is preserved at `v0.5.2-cloud` and `main`. The local edition lives on `codex/local-ai-architecture`, with tested release `v0.6.0-local.2`.
 
 ## Current local edition
