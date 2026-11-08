@@ -10,7 +10,7 @@ test('local tool loop preserves IDs and returns outputs without cloud authentica
   const requests=[],actions=[];
   const ai=new AI(settings,noKey,async(name,args)=>{actions.push([name,args]);return {status:'saved',id:'note1'};},async(url,options)=>{
     requests.push({url,...options});
-    return requests.length===1?reply({tool_calls:[{id:'local-call',function:{name:'create_note',arguments:'{"title":"Test","text":"Local"}'}}]}):reply({content:'Saved.'});
+    return requests.length===1?reply({reasoning_content:'private planning fixture',tool_calls:[{id:'local-call',function:{name:'create_note',arguments:'{"title":"Test","text":"Local"}'}}]}):reply({content:'Saved.'});
   });
   assert.equal(await ai.chat('Save a note'),'Saved.');
   assert.equal(actions[0][0],'create_note');
@@ -19,6 +19,9 @@ test('local tool loop preserves IDs and returns outputs without cloud authentica
   assert.equal(body.messages.at(-1).tool_call_id,'local-call');
   assert.equal(JSON.parse(body.messages.at(-1).content).id,'note1');
   assert.equal(body.tools[0].type,'function');
+  assert.equal(body.chat_template_kwargs.enable_thinking,true);
+  assert.equal(body.messages.find(m=>m.tool_calls)?.reasoning_content,'private planning fixture');
+  assert.ok(!JSON.stringify(ai.history).includes('private planning fixture'));
 });
 
 test('local images remain multimodal and are removed when screen sharing is revoked',()=>{

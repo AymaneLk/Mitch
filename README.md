@@ -6,7 +6,9 @@ Windows Electron desktop companion with notes, reminders, dictation, screen unde
 
 Chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation and voice recognition use Nemotron Speech Streaming English 0.6B Q8 on the CPU. A local Kokoro service supplies English speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
 
-Version 0.6.0-local.6 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Nemotron ASR → Qwen/tools → Kokoro with automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
+Version 0.6.0-local.7 forces local chat, dictation and voice. Cloud API calls are blocked even when an old key is saved. Voice uses Nemotron ASR → Qwen/tools → Kokoro with automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
+
+Local tool turns now enable reasoning and preserve it between tool calls only. Desktop replies undergo a separate check against tool evidence, without the draft reply or private reasoning. Input delivery without a subsequent observation cannot pass the completion gate. Simple Spotify Liked Songs and current-track playback requests additionally require explicit accessible heading/track-list or transport evidence; navigation links and timestamps cannot establish completion. If those controls are unavailable or incomplete, Mitch reports unverified completion instead of accepting a model's guess. Simple play/resume/pause commands reject blind global toggles; observed Spotify Play/Pause controls are checked to prevent reversing the requested state. Named-song and more complex workflows retain the general review and are not covered by this specialized check. Screenshot-only analysis and short structured audits use non-thinking mode. These checks improve the tested workflows but do not make the 4B model as capable as the cloud edition or guarantee every UI interpretation.
 
 The original cloud edition remains on `main` and tag `v0.5.2-cloud`. The local edition is on `codex/local-ai-architecture`.
 
@@ -39,9 +41,12 @@ npm test
 npm run smoke
 vendor/local-ai/venv/Scripts/python.exe scripts/test-local-speech.py
 node scripts/test-local-ai.js
+node scripts/test-local-desktop-reasoning.js
 ```
 
 Speech tests generate synthetic English/French audio and a controlled vision fixture; run them before the local AI test. AI tests use a mock note dispatcher, not your notes. Results go to ignored `test-output`. Tests cover actual model chat, tool selection, image recognition, WebM transcription and Kokoro output. They do not establish microphone quality, long-session reliability or live conversation latency.
+
+The desktop reasoning regression uses the real local model with a simulated French Spotify UI. It rejects invented app/window identities and checks navigation, paused-to-playing, already-playing, and incomplete-state audits. It does not control the user's Spotify account. The final successful three-turn run during this fix took about 11.3, 24.5 and 4.5 seconds respectively. Reanalysis of the reported screenshot correctly identified Home and paused playback; live Spotify capture verification was blocked by native window-capture timeouts. Do not treat these checks as a live Spotify end-to-end pass.
 
 Initial verification on 2026-11-08: 213 unit tests and desktop smoke passed. Local chat ~1.7s, tool round trip ~1.0s, controlled vision ~0.5s, short synthetic ASR clips ~1.1–1.6s. These are single-run measurements, not performance guarantees.
 
