@@ -4,14 +4,14 @@ const path=require('node:path');
 const {randomUUID}=require('node:crypto');
 
 class WakeListener {
-  constructor({helper,spawnImpl=spawn,onState=()=>{},onWake=()=>{}}) {
-    this.helper=helper;this.spawnImpl=spawnImpl;this.onState=onState;this.onWake=onWake;this.generation=0;this.child=null;this.state={status:'off'};
+  constructor({helper,powershellPath,spawnImpl=spawn,onState=()=>{},onWake=()=>{}}) {
+    this.helper=helper;this.powershellPath=powershellPath;this.spawnImpl=spawnImpl;this.onState=onState;this.onWake=onWake;this.generation=0;this.child=null;this.state={status:'off'};
   }
   update(status,extra={}) {this.state={status,...extra};this.onState(this.state);}
   start() {
     if(this.child)return;
     const generation=++this.generation;this.update('starting');
-    const child=this.spawnImpl(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',this.helper],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+    const child=this.spawnImpl(this.powershellPath||path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',this.helper],{windowsHide:true,stdio:['pipe','pipe','pipe']});
     this.child=child;let buffer='',woke=false,failed=false;
     const current=()=>generation===this.generation&&this.child===child;
     const fail=message=>{if(!current()||failed)return;failed=true;this.update('error',{message:String(message).slice(0,400)});child.kill();};

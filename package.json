@@ -3,7 +3,7 @@
   "productName": "Mitch",
   "version": "0.6.0-local.22",
   "private": true,
-  "description": "Mitch, your Windows desktop companion",
+  "description": "Open-source AI desktop assistant for Windows with natural-language and voice computer control.",
   "main": "main.js",
   "author": "Independent recreation for local use",
   "scripts": {
@@ -22,5 +22,24 @@
     "node-ical": "^0.27.4",
     "undici": "7.30.2",
     "ws": "^8.22.2"
-  }
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AymaneLk/Mitch.git"
+  },
+  "homepage": "https://github.com/AymaneLk/Mitch#readme",
+  "bugs": {
+    "url": "https://github.com/AymaneLk/Mitch/issues"
+  },
+  "keywords": [
+    "ai-assistant",
+    "electron",
+    "windows",
+    "computer-use",
+    "automation"
+  ]
 }

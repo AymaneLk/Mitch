@@ -9,3 +9,16 @@ vendor/
 __pycache__/
 *.pyc
 browser-extension/config.js
+
+# Local credentials and user data
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+library.json
+library.json.tmp
+calendar.ics
+wake-status.json
+.DS_Store
+Thumbs.db

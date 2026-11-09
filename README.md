@@ -1,6 +1,37 @@
 # Mitch
 
-Windows Electron desktop companion with notes, reminders, dictation, screen understanding, and Cua desktop tools.
+Mitch is an open-source AI desktop assistant for Windows, with notes, reminders, dictation, screen understanding, and native/browser computer control.
+
+**Preview 0.6.0-local.22 · Windows 10/11 x64 · MIT licensed**
+
+This is an independent implementation inspired by Pixie for macOS, not an official Pixie release or a complete port. No extracted app assets, proprietary prompts, or private Pixie services are included. See the [changelog](CHANGELOG.md).
+
+## Install from source
+
+Use Git and Node.js 24 or later on Windows:
+
+```powershell
+git clone https://github.com/AymaneLk/Mitch.git
+cd Mitch
+git switch codex/local-ai-architecture
+npm ci
+npm run setup:cua
+npm start
+```
+
+Choose DeepSeek in Settings and enter your own API key for cloud chat and planning, or configure the local runtime described below. DeepSeek usage is billed to your API account. OpenAI API calls are disabled in this edition. Local voice and dictation need the separate CPU speech services; local Qwen chat additionally needs its model service. Downloaded models and runtime environments are not included in Git or portable builds. See the [current user guide](docs/USER-GUIDE.md).
+
+The Cua setup command downloads the pinned Windows driver and verifies its checksum and Authenticode signer. If npm install scripts are disabled, run `node node_modules/electron/install.js` first. Portable builds are unsigned and request Windows administrator access through UAC; source launches use the privileges of the launching process. Extract the whole portable folder and keep its neighboring files intact.
+
+## Permissions and privacy
+
+Screen sharing, desktop actions, and voice wake are off by default. Once enabled, desktop actions can change files and submit forms without per-action prompts. Blue screen corners indicate active computer use. **Stop or Ctrl+Alt+Escape cancels pending work and pauses computer use; delivered actions cannot be undone.** Closing the main window keeps Mitch in the tray; choose Quit to exit.
+
+With DeepSeek selected, chat, task-related app/page content, transcripts, and permitted screenshots can be sent to DeepSeek. Local speech recognition and synthesis run on your PC. Preparation while speaking may send task context to the selected model before the final transcript, but it does not execute input. Windows-protected storage protects saved API keys; local notes and settings are not encrypted. See [Security and privacy](SECURITY.md) for browser permissions, data locations, and limitations.
+
+## Contributing and license
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Mitch source is licensed under the [MIT License](LICENSE); dependencies and downloaded components retain their own licenses and [notices](THIRD_PARTY_NOTICES.md). The historical cloud edition is preserved by the `v0.5.2-cloud` tag. ChatGPT sign-in remains an unimplemented [follow-up](docs/CHATGPT-SIGN-IN.md).
 
 ## Direct folder access (v0.6.0-local.22)
 
@@ -47,7 +78,7 @@ Mitch creates its paired extension folder inside its existing application profil
 
 Local tool turns now enable reasoning and preserve it between tool calls only. Desktop replies undergo a separate check against tool evidence, without the draft reply or private reasoning. Input delivery without a subsequent observation cannot pass the completion gate. Simple Spotify Liked Songs and current-track playback requests additionally require explicit accessible heading/track-list or transport evidence; navigation links and timestamps cannot establish completion. If those controls are unavailable or incomplete, Mitch reports unverified completion instead of accepting a model's guess. Simple play/resume/pause commands reject blind global toggles; observed Spotify Play/Pause controls are checked to prevent reversing the requested state. Named-song and more complex workflows retain the general review and are not covered by this specialized check. For local Qwen, screenshot-only analysis and short structured audits use non-thinking mode. These checks improve the tested workflows but do not make the 4B model as capable as the cloud edition or guarantee every UI interpretation.
 
-The original cloud edition remains on `main` and tag `v0.5.2-cloud`. The local edition is on `codex/local-ai-architecture`.
+The original cloud edition is preserved by tag `v0.5.2-cloud`. Development of this local/DeepSeek edition is on `codex/local-ai-architecture`.
 
 ### Setup (Windows NVIDIA)
 

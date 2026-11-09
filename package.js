@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const {ignorePackageFile} = require('./package-files');
 const {verifyAdministratorManifest} = require('./scripts/verify-admin');
 async function build() {
   if (!fs.existsSync(path.join(__dirname, 'vendor/cua-driver/cua-driver.exe'))) throw new Error('Run npm run setup:cua before packaging.');
@@ -10,7 +11,7 @@ async function build() {
     overwrite: true, asar: {unpack: '{windows,wake-word,folder-helper}.ps1', unpackDir: 'vendor'}, prune: true,
     icon: path.join(__dirname, 'assets/companion.ico'), appVersion: require('./package.json').version,
     download: {cacheRoot: path.join(__dirname, '.electron-cache')},
-    ignore: [/^\/(?:tests|test-output|outputs|scripts|local_runtime|\.npm-cache|\.electron-cache|\.git)(?:\/|$)/, /^\/vendor\/(?:local-ai|goclick)(?:\/|$)/, /^\/(?:build-icon|package)\.js$/],
+    ignore: ignorePackageFile,
     win32metadata: {CompanyName:'Independent recreation', FileDescription:'Mitch Windows desktop companion', ProductName:'Mitch', 'requested-execution-level':'requireAdministrator'},
   });
   for (const result of results) {

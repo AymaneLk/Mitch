@@ -7,14 +7,14 @@ function fakeProcess(){
   child.event=data=>child.stdout.emit('data',Buffer.from(JSON.stringify(data)+'\n'));return child;
 }
 test('local helper is hidden, emits no transcript and wakes once only after a qualified result',async()=>{
-  let child,options,args;const wakes=[],states=[];const listener=new WakeListener({helper:'C:/Mitch/wake-word.ps1',spawnImpl:(_file,a,o)=>{args=a;options=o;return child=fakeProcess();},onWake:()=>wakes.push(true),onState:s=>states.push(s)});
+  let child,options,args;const wakes=[],states=[];const listener=new WakeListener({powershellPath:'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',helper:'C:/Mitch/wake-word.ps1',spawnImpl:(_file,a,o)=>{args=a;options=o;return child=fakeProcess();},onWake:()=>wakes.push(true),onState:s=>states.push(s)});
   listener.start();assert.equal(options.windowsHide,true);assert.ok(args.includes('C:/Mitch/wake-word.ps1'));
   child.event({event:'ready',culture:'en-US'});assert.equal(listener.state.status,'listening');child.event({event:'wake',confidence:0.1});assert.equal(wakes.length,0);
   child.event({event:'wake',confidence:0.9,text:'never forward ambient text'});child.event({event:'wake',confidence:0.9});assert.equal(wakes.length,1);assert.ok(!JSON.stringify(states).includes('ambient'));
   await listener.stop();child.event({event:'wake',confidence:0.99});assert.equal(wakes.length,1);
 });
 test('stop releases the process and late helper messages cannot reactivate listening',async()=>{
-  let child;const listener=new WakeListener({helper:'wake.ps1',spawnImpl:()=>child=fakeProcess()});listener.start();await listener.stop();child.event({event:'ready'});
+  let child;const listener=new WakeListener({powershellPath:'C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',helper:'wake.ps1',spawnImpl:()=>child=fakeProcess()});listener.start();await listener.stop();child.event({event:'ready'});
   assert.equal(listener.state.status,'off');assert.equal(listener.child,null);
 });
 function service(){
