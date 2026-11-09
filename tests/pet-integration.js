@@ -12,8 +12,8 @@ module.exports=async({main,pet,screen,directory,version})=>{
     await until("document.getElementById('status').textContent",value=>value==='Connecting…');
     assert.equal(pet.getBounds().width,440);assert.equal(pet.isFocusable(),false);
     await snapshot('pet-connecting.png');
-    await run("live.channel={readyState:'open',close(){this.readyState='closed'}};live.change('active','Listening. Talk naturally.')");
-    const emit=async(type,delta)=>run(`live.receive(${JSON.stringify({type:`session.${type}_transcript.delta`,delta})})`);
+    await run("live.change('active','Listening. Talk naturally.')");
+    const emit=async(type,delta)=>run(`live.caption(${JSON.stringify(delta)},${JSON.stringify(type==='input'?'You':'Mitch')})`);
     await emit('input','Hi Mitch, ');await emit('input','what have I got planned today?');
     await emit('output','Good morning! ');await emit('output','Let’s take a look at your day.');
     await until("document.querySelectorAll('.words').length",value=>value===2);
@@ -43,6 +43,6 @@ module.exports=async({main,pet,screen,directory,version})=>{
       const bounds=pet.getBounds();assert.ok(bounds.x>=area.x&&bounds.x+bounds.width<=area.x+area.width);assert.ok(bounds.y>=area.y&&bounds.y+bounds.height<=area.y+area.height);
       await run('live.cleanup()');await until("document.getElementById('pet').classList.contains('idle')",Boolean);
     }
-    fs.writeFileSync(path.join(directory,'pet-integration.json'),JSON.stringify({status:'passed',version,at:new Date().toISOString(),checks:['connecting and listening in floating pet','live input/output transcript deltas through real renderer IPC while main window hidden','automatic RTL text','bounded scrolling transcript','inert transcript markup','trusted sender restriction','Stop clears captions and late events stay cleared','expansion stays on each monitor','pet does not take focus'],scope:'Synthetic transcript events through the existing LiveVoice event handler; no paid voice session.'},null,2));
+    fs.writeFileSync(path.join(directory,'pet-integration.json'),JSON.stringify({status:'passed',version,at:new Date().toISOString(),checks:['connecting and listening in floating pet','live input/output transcript deltas through real renderer IPC while main window hidden','automatic RTL text','bounded scrolling transcript','inert transcript markup','trusted sender restriction','Stop clears captions and late events stay cleared','expansion stays on each monitor','pet does not take focus'],scope:'Synthetic transcript events through the LocalVoice caption handler; no cloud voice session.'},null,2));
   }finally{await run('live.cleanup()');pet.setBounds(originalBounds);if(visible)main.showInactive();}
 };

@@ -1,0 +1,83 @@
+[
+  {
+    "voice": "kokoro",
+    "text": "Hello, I am Mitch. How can I help you today?",
+    "load_s": 0.0,
+    "generation_s": 0.87,
+    "audio_s": 2.645,
+    "rtf": 0.329,
+    "transcript": "Hello, I am Mitch. How can I help you today?"
+  },
+  {
+    "voice": "kokoro",
+    "text": "Your order ships on March 3rd. Call 415-555-0199 before 5:30 p.m.",
+    "load_s": 0.0,
+    "generation_s": 2.74,
+    "audio_s": 9.259,
+    "rtf": 0.296,
+    "transcript": "Your order ships on March third. Call four hundred fifteen dash five hundred fifty-five dash zero one nine nine before five thirty p.m."
+  },
+  {
+    "voice": "kokoro",
+    "text": "I saved your grocery note. It contains apples, bread, milk, and coffee.",
+    "load_s": 0.0,
+    "generation_s": 1.4,
+    "audio_s": 4.437,
+    "rtf": 0.315,
+    "transcript": "I saved your grocery note. It contains apples, bread, milk, and coffee."
+  },
+  {
+    "voice": "juno",
+    "text": "Hello, I am Mitch. How can I help you today?",
+    "load_s": 0.288,
+    "generation_s": 2.569,
+    "audio_s": 3.64,
+    "rtf": 0.706,
+    "transcript": "Hello, I am Mitch. How can I help you today?"
+  },
+  {
+    "voice": "juno",
+    "text": "Your order ships on March 3rd. Call 415-555-0199 before 5:30 p.m.",
+    "load_s": 0.288,
+    "generation_s": 2.322,
+    "audio_s": 8.04,
+    "rtf": 0.289,
+    "transcript": "Your order ships on March third. Call four one five five five five zero one nine nine before five thirty p.m."
+  },
+  {
+    "voice": "juno",
+    "text": "I saved your grocery note. It contains apples, bread, milk, and coffee.",
+    "load_s": 0.288,
+    "generation_s": 1.506,
+    "audio_s": 5.24,
+    "rtf": 0.287,
+    "transcript": "I saved your grocery note. It contains apples, bread, milk, and coffee."
+  },
+  {
+    "voice": "mira",
+    "text": "Hello, I am Mitch. How can I help you today?",
+    "load_s": 0.356,
+    "generation_s": 21.039,
+    "audio_s": 5.12,
+    "rtf": 4.109,
+    "transcript": "Hello, I am Mitch. How can I help you today?"
+  },
+  {
+    "voice": "mira",
+    "text": "Your order ships on March 3rd. Call 415-555-0199 before 5:30 p.m.",
+    "load_s": 0.356,
+    "generation_s": 2.741,
+    "audio_s": 9.52,
+    "rtf": 0.288,
+    "transcript": "Your order ships on March third. Call four one five five five five zero one nine nine before 5:30 p.m."
+  },
+  {
+    "voice": "mira",
+    "text": "I saved your grocery note. It contains apples, bread, milk, and coffee.",
+    "load_s": 0.356,
+    "generation_s": 14.633,
+    "audio_s": 7.68,
+    "rtf": 1.905,
+    "transcript": "I saved your grocery note. It contains apples, bread, milk, and coffee."
+  }
+]

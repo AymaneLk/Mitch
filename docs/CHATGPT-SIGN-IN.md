@@ -1,6 +1,6 @@
 # ChatGPT sign-in follow-up
 
-This preparation update does not implement sign-in. Mitch currently requires an OpenAI API key. Do not paste ChatGPT session cookies or OAuth tokens into the API-key field.
+ChatGPT sign-in is not implemented. This follow-up originated with the historical OpenAI cloud edition; the current local/DeepSeek edition disables OpenAI API calls and uses either a DeepSeek API key or local services. Do not paste ChatGPT session cookies or OAuth tokens into an API-key field.
 
 The official [quickstart](https://developers.openai.com/siwc/quickstart) and [open-source registration guide](https://developers.openai.com/siwc/token-sharing-open-source/sign-in) describe dynamic registration without a client secret or partner API key. Eligibility and granted scopes govern plan usage; publishing this repository does not certify the app or guarantee authorization.
 

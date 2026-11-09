@@ -51,6 +51,18 @@ module.exports = async function checkVisualInput({BrowserWindow,screen,dispatch,
     // The test window has no non-client frame. Coordinates are fractions of the
     // actual returned PNG, never desktop pixels or assumptions about monitor DPI.
     const point=name=>({x:geometry[name].x/geometry.width,y:geometry[name].y/geometry.height});
+    const clickBox=name=>{
+      const b=geometry.boxes[name];
+      return {target_box:{left:b.left/geometry.width,top:b.top/geometry.height,right:b.right/geometry.width,bottom:b.bottom/geometry.height}};
+    };
+    const desktopBox=name=>{
+      const b=geometry.boxes[name],content=win.getContentBounds();
+      return {target_box:{left:(content.x-primary.bounds.x+b.left)/primary.bounds.width,top:(content.y-primary.bounds.y+b.top)/primary.bounds.height,right:(content.x-primary.bounds.x+b.right)/primary.bounds.width,bottom:(content.y-primary.bounds.y+b.bottom)/primary.bounds.height}};
+    };
+    const atCenter=(state,name)=>{
+      const actual=state.clickLocations[name],expected=geometry[name];
+      return actual&&Math.abs(actual.x-expected.x)<=2&&Math.abs(actual.y-expected.y)<=2;
+    };
     const desktopPoint=name=>{
       assert.ok(primary,'Primary-display metadata is required for desktop coordinates.');
       const content=win.getContentBounds(),scale=primary.scaleFactor;
@@ -91,21 +103,20 @@ module.exports = async function checkVisualInput({BrowserWindow,screen,dispatch,
     const windowMove=await run('computer_input',{snapshot:observation.snapshot,kind:'move',...point('click')});
     assert.equal(windowMove.status,'error','Window-scoped native movement is decorative and must not claim a real hover.');
     checks.push({name:'unsupported window hover reports an actionable refusal'});
-    if(primary){
-      observation=checkObservation(await run('computer_observe',{scope:'desktop'}));
-      await act('desktop pointer movement over the isolated canvas',{kind:'move',...desktopPoint('right_click')},state=>state.pointerMoves>0&&state.lastPointer?.x>=368&&state.lastPointer.x<=522&&state.lastPointer.y>=18&&state.lastPointer.y<=83);
-    }
     observation=checkObservation(await run('computer_observe',{scope:'window',pid:target.pid,window_id:target.window_id}));
-    const clicked=await act('pixel click on a canvas-only target',{kind:'click',...point('click')},state=>state.clicks===1);
-    const stale=await run('computer_input',{snapshot:clicked.previous,kind:'click',...point('click')});
+    const pointOnly=await run('computer_input',{snapshot:observation.snapshot,kind:'click',...point('click')});
+    assert.equal(pointOnly.status,'error');assert.equal((await read()).clicks,0,'Point-only clicks must not send input.');
+    checks.push({name:'point-only click refused without input'});
+    const clicked=await act('center click on a canvas-only target',{kind:'click',...clickBox('click')},state=>state.clicks===1&&atCenter(state,'click'));
+    const stale=await run('computer_input',{snapshot:clicked.previous,kind:'click',...clickBox('click')});
     assert.equal(stale.status,'error','Consumed screenshots must not authorize another click.');
     assert.equal((await read()).clicks,1,'Refusing a stale capture must not deliver input.');
     checks.push({name:'stale screenshot refused without input'});
-    await act('pixel double click',{kind:'double_click',...point('double_click')},state=>state.doubleClicks===1);
-    await act('pixel right click',{kind:'right_click',...point('right_click')},state=>state.rightClicks===1);
+    await act('center double click',{kind:'double_click',...clickBox('double_click')},state=>state.doubleClicks===1&&atCenter(state,'double_click'));
+    await act('center right click',{kind:'right_click',...clickBox('right_click')},state=>state.rightClicks===1&&atCenter(state,'right_click'));
     const start=point('drag_start'),end=point('drag_end');
     await act('drag canvas object to its destination',{kind:'drag',...start,x2:end.x,y2:end.y},state=>state.dragCompleted===1&&state.dragStarted===1&&state.dragMoves>0);
-    await act('focus a text field by position',{kind:'click',...point('text')},state=>state.activeElement==='editor');
+    await act('focus a text field at its center',{kind:'click',...clickBox('text')},state=>state.activeElement==='editor'&&atCenter(state,'text'));
     await act('Ctrl+A selection',{kind:'hotkey',keys:['ctrl','a']},state=>state.activeElement==='editor'&&state.selectionStart===0&&state.selectionEnd===state.text.length);
     const text='Pixie visual input — سلام';
     await act('Unicode keyboard text entry',{kind:'type',text},state=>state.text===text&&state.typedEvents>0);
@@ -119,9 +130,10 @@ module.exports = async function checkVisualInput({BrowserWindow,screen,dispatch,
     if(primary){
       observation=checkObservation(await run('computer_observe',{scope:'desktop'}));
       const beforeDesktopClick=await read();
-      await act('desktop click focuses the isolated editor',{kind:'click',...desktopPoint('text')},state=>state.activeElement==='editor'&&state.editorClicks===beforeDesktopClick.editorClicks+1);
+      await act('desktop center click focuses the isolated editor',{kind:'click',...desktopBox('text')},state=>state.activeElement==='editor'&&state.editorClicks===beforeDesktopClick.editorClicks+1&&atCenter(state,'text'));
       await act('desktop Ctrl+A selects the isolated editor',{kind:'hotkey',keys:['ctrl','a']},state=>state.activeElement==='editor'&&state.selectionStart===0&&state.selectionEnd===state.text.length);
       await act('desktop Unicode typing uses the selected field',{kind:'type',text:'Desktop path — سلام'},state=>state.text==='Desktop path — سلام');
+      await act('desktop pointer movement over the isolated canvas',{kind:'move',...desktopPoint('right_click')},state=>state.pointerMoves>0&&state.lastPointer?.x>=368&&state.lastPointer.x<=522&&state.lastPointer.y>=18&&state.lastPointer.y<=83);
       // Save only our own window's native screenshot, never the full desktop.
       observation=checkObservation(await run('computer_observe',{scope:'window',pid:target.pid,window_id:target.window_id}));
     }
@@ -129,8 +141,12 @@ module.exports = async function checkVisualInput({BrowserWindow,screen,dispatch,
     const finalState=await read();
     saveNativeScreenshot(observation,'visual-native-after.png');
     fs.writeFileSync(path.join(directory,'visual-fixture-after.png'),(await win.webContents.capturePage()).toPNG());
-    const report={status:'passed',at:new Date().toISOString(),appVersion:version,window:{pid:target.pid,window_id:target.window_id,title},desktopInputTested:!!primary,checks,finalState,verification:'Independent fixture event counters, text value, selection, saved test value, drag location and scroll offset; no model/API calls.'};
+    const centerErrors=Object.entries(finalState.clickLocations).map(([name,p])=>({name,dx:p.x-geometry[name].x,dy:p.y-geometry[name].y}));
+    const report={status:'passed',at:new Date().toISOString(),appVersion:version,window:{pid:target.pid,window_id:target.window_id,title},desktopInputTested:!!primary,scaleFactor:primary?.scaleFactor,centerErrors,checks,finalState,verification:'Independent pointer-event coordinates (center tolerance 2 CSS pixels), event counters, text value, selection, saved test value, drag location and scroll offset; no model/API calls.'};
     fs.writeFileSync(path.join(directory,'visual-integration.json'),JSON.stringify(report,null,2));
     return report;
+  } catch(error){
+    fs.writeFileSync(path.join(directory,'visual-integration-failure.json'),JSON.stringify({status:'failed',at:new Date().toISOString(),checks,error:error.message,frame:observation?{width:observation.width,height:observation.height,window:observation.window,screen_width:observation.screen_width,screen_height:observation.screen_height}:null,fixture:win.isDestroyed()?null:{bounds:win.getContentBounds(),geometry:await win.webContents.executeJavaScript('window.fixture.targets()'),state:await read()},display:primary},null,2));
+    throw error;
   } finally {if(!win.isDestroyed())win.destroy();}
 };

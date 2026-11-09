@@ -37,7 +37,7 @@ function removeToolImages(input) {
   }
 }
 
-const WINDOW_OBSERVATION_TOOLS=new Set(['computer_find_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_observe','computer_input']);
+const WINDOW_OBSERVATION_TOOLS=new Set(['computer_find_window','computer_focus_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_execute_plan','computer_observe','computer_input','browser_read_page','browser_execute_plan','browser_follow_link','browser_open_tab','computer_run_workflow']);
 
 // The native provider replaces accessibility tokens when it reads that window
 // again. Retaining each old control list makes long tasks repeatedly upload and
@@ -56,13 +56,24 @@ function pruneToolObservations(input) {
     if(!data||typeof data!=='object'||Array.isArray(data))continue;
     const observation=data.observation??data;
     const window=observation?.window;
-    if(typeof observation?.snapshot!=='string'||!observation.snapshot||!Number.isSafeInteger(window?.pid)||window.pid<=0||!Number.isSafeInteger(window?.window_id)||window.window_id<=0)continue;
-    const key=`${window.pid}:${window.window_id}`,newest=latest.get(key);
+    if(typeof observation?.snapshot!=='string'||!observation.snapshot)continue;
+    const native=Number.isSafeInteger(window?.pid)&&window.pid>0&&Number.isSafeInteger(window?.window_id)&&window.window_id>0;
+    const page=observation.source==='browser_dom'&&typeof observation.session_id==='string'&&Number.isSafeInteger(observation.tab_id);
+    if(!native&&!page)continue;
+    const key=native?`native:${window.pid}:${window.window_id}`:`page:${observation.browser}:${observation.session_id}:${observation.tab_id}`,newest=latest.get(key);
     if(!newest){latest.set(key,observation.snapshot);continue;}
-    if(newest===observation.snapshot||!Array.isArray(observation.controls))continue;
-    observation.controls_omitted=observation.controls.length;
+    if(newest===observation.snapshot||(!Array.isArray(observation.controls)&&!Array.isArray(observation.targets)))continue;
+    if(Array.isArray(observation.controls))observation.controls_omitted=observation.controls.length;
+    if(Array.isArray(observation.targets))observation.targets_omitted=observation.targets.length;
     observation.snapshot_superseded=true;
     delete observation.controls;
+    delete observation.targets;
+    // Prior assertions remain evidence of completed steps; their old element
+    // lists must not be reused as current input targets.
+    for(const proof of Array.isArray(data.completion)?data.completion:[]){
+      const frame=proof?.observation;
+      if(frame&&Array.isArray(frame.controls)){frame.controls_omitted=frame.controls.length;frame.snapshot_superseded=true;delete frame.controls;delete frame.targets;}
+    }
     if(part)part.text=JSON.stringify(data);else item.output=JSON.stringify(data);
   }
 }

@@ -1,5 +1,7 @@
 const { randomUUID } = require('node:crypto');
 const { captureTarget, resolveTarget } = require('./computer-target');
+const {nativeErrorDetails}=require('./native-failure');
+const {controlState}=require('./desktop-state');
 
 const NAVIGATION_KEYS = new Set(['Return', 'Tab', 'Escape', 'Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete']);
 const SNAPSHOT_TTL = 90000;
@@ -17,9 +19,10 @@ function decode(result) {
     try { data = JSON.parse(text); } catch { data = { message: text }; }
   }
   if (result.isError || result.is_error || data.isError || data.is_error || data.effect === 'refused' || ['error', 'refused'].includes(data.status) || data.refusal) {
-    const error = new Error(data.message || data.error?.message || data.error?.hint || data.code || data.error?.code || data.error_code || 'Cua refused this operation.');
-    error.code = data.code || data.error?.code || data.error_code;
-    error.refused = true;
+    const details=nativeErrorDetails(result,data,'Cua refused this operation.');
+    const error = new Error(details.message);
+    error.code = details.code;
+    error.refused = details.refused;
     throw error;
   }
   return data;
@@ -119,10 +122,11 @@ class ComputerUse {
     if (!Array.isArray(rows)) throw new Error('Cua did not return a window list.');
     const windows = [];
     for (const row of rows) {
-      if (row.is_on_screen === false && row.minimized !== true) continue;
+      if (row.is_on_screen === false && row.minimized !== true && !String(row.title??'').trim()) continue;
       let identity;
       try { identity = windowIdentity(row); } catch { continue; }
       const window = { ...identity, title: String(row.title ?? '').slice(0, 1000), app: String(row.app_name ?? row.owner_name ?? row.name ?? '').slice(0, 150), minimized:row.minimized===true, on_screen:row.is_on_screen!==false };
+      if(Number.isSafeInteger(row.owner_window_id)&&row.owner_window_id>0)window.owner_window_id=row.owner_window_id;
       this.windows.set(`${identity.pid}:${identity.window_id}`, window);
       if ((window.title + ' ' + window.app).toLowerCase().includes(query.toLowerCase())) windows.push(window);
     }
@@ -190,6 +194,20 @@ class ComputerUse {
     return {...observed,message:'The window was restored, but its controls are still unavailable. '+(observed.message||'')};
   }
 
+  async focus(args,context={}) {
+    const generation=this.generation,check=()=>{this.assertReady(generation);context.signal?.throwIfAborted();context.assertActive?.();};
+    check();const identity=windowIdentity(args),window=this.windows.get(`${identity.pid}:${identity.window_id}`);
+    if(!window)throw new Error('List windows first and choose one exact observed window to focus.');
+    let observation;
+    if(window.minimized){observation=await this.restore({...identity},context);check();}
+    if(!observation)try{observation=await this.inspect(identity);}catch(error){check();observation={status:'partial',window:{...identity,title:window.title},controls:[],message:'Window controls could not be read: '+error.message};}
+    check();
+    // Raise last: accessibility providers can change focus while being read.
+    const focused=await this.invoke('bring_to_front',{...identity,session:this.session},generation);check();
+    if(focused.landed_on_target===false||Number(focused.now_fg_hwnd)!==identity.window_id)throw new Error('Windows did not confirm focus on the requested window. Inspect the open windows before continuing.');
+    return {...observation,focused:true,focus_verified:true};
+  }
+
   async sequence({snapshot: snapshotId, actions} = {}, context = {}) {
     const generation = this.generation;
     const check = () => { this.assertReady(generation); context.signal?.throwIfAborted(); context.assertActive?.(); };
@@ -212,14 +230,14 @@ class ComputerUse {
     });
     const started = performance.now(), results = [];
     let observation = this.observation(initial), completed = 0, attempted = 0;
-    const summary = (status, message) => ({status,completed,attempted,total:plan.length,verified:status==='completed',confirmed:results.filter(result=>result.verified).length,duration_ms:Math.round(performance.now()-started),results,...(observation?{observation}:{}),...(message?{message}:{})});
+    const summary = (status, message) => ({status,completed,attempted,action_attempted:attempted>0,outcome_unknown:results.some(result=>result.outcome_unknown===true),total:plan.length,verified:status==='completed',confirmed:results.filter(result=>result.verified).length,duration_ms:Math.round(performance.now()-started),results,...(observation?{observation}:{}),...(message?{message}:{})});
     for (const {step,target} of plan) {
       check();
       let control;
       try { control = resolveTarget(this.getSnapshot(observation.snapshot,generation),target); }
       catch (error) { check(); return summary('interrupted',error.message+' No remaining steps were run. Do not replay completed steps.'); }
       try {
-        const currentId = observation.snapshot;
+        const currentId = observation.snapshot,previousControls=controlState(observation);
         observation = undefined;
         attempted++;
         const result = await this.action({...step,snapshot:currentId,control_id:control.control_id},context);
@@ -227,6 +245,9 @@ class ComputerUse {
         results.push({step:attempted,status:result.status,verified:result.verified,effect:result.effect,...(result.verification?{verification:result.verification}:{}),...(result.message?{message:result.message}:{})});
         if (['verified','unverified','observation_failed'].includes(result.status)) completed++;
         observation = result.observation;
+        const next=plan[attempted];
+        const keypadDigit=/calculat(?:or|rice)/i.test(initial.window.title)&&/^(?:[0-9]|zero|one|two|three|four|five|six|seven|eight|nine|zéro|un|deux|trois|quatre|cinq|sept|huit|neuf)$/i.test(target.name);
+        if(!keypadDigit&&!result.verified&&step.kind==='click'&&next?.step.kind==='click'&&next.target.name===target.name&&observation?.controls&&controlState(observation)===previousControls)return summary('interrupted','The click produced no observable change. Its duplicate was not sent. Check open windows or the fresh observation before continuing.');
         // Windows may report accepted clicks as unverifiable. These are known,
         // unconditional input steps, not conditional navigation or task success.
         // Text MUST be confirmed before any later click can submit a stale field.
@@ -316,7 +337,8 @@ class ComputerUse {
       checkCaller();
     } catch (error) {
       this.snapshots.delete(snapshot.id);
-      if (!error.refused && !this.paused) error.message = 'Computer action interrupted; its outcome may be unknown. Inspect before retrying. ' + error.message;
+      error.action_attempted=true;
+      if (!error.refused && !this.paused) error.message = 'Computer action interrupted; its outcome may be unknown. Inspect the result and open windows; do not repeat the action. ' + error.message;
       throw error;
     }
     this.snapshots.delete(snapshot.id);

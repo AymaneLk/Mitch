@@ -1,0 +1,13 @@
+# CPU wheels: setup passes the PyTorch CPU index explicitly.
+torch==2.7.1+cpu
+torchvision==0.22.1+cpu
+transformers==4.45.0
+tokenizers==0.20.3
+timm==1.0.22
+einops==0.8.1
+safetensors==0.6.2
+numpy==2.2.6
+pillow==11.3.0
+fastapi==0.121.0
+uvicorn==0.38.0
+httpx==0.28.1

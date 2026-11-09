@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>Calculator</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:28px;background:#f6f4ef;color:#263124;font:16px 'Segoe UI',sans-serif}h1{font-size:25px;margin:0 0 8px}p{margin:0 0 20px;color:#56634f}.keypad{display:grid;grid-template-columns:repeat(4,100px);gap:8px}.keypad button{height:55px;background:white;border:1px solid #bac5b3;border-radius:6px;font:22px 'Segoe UI',sans-serif;cursor:pointer}.keypad button:focus-visible{outline:3px solid #61905a}#display{display:block;width:424px;min-height:64px;background:#e1e8da;border:1px solid #bac5b3;border-radius:6px;margin-bottom:15px;padding:10px;text-align:right;font:30px Consolas,monospace}textarea{width:100%;height:260px;padding:15px;border:1px solid #a7b79e;border-radius:6px;font:18px 'Segoe UI',sans-serif;background:white;color:#182214;resize:none}[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<h1 id="heading">Calculator</h1>
+<p>Local verification fixture. No network, saved documents, accounts or user apps.</p>
+<section id="calculator">
+  <output id="display" role="status" aria-label="Display is 0">Display is 0</output>
+  <div class="keypad">
+    <button data-key="clear" aria-label="Clear">C</button><button data-key="/" aria-label="Divide by">÷</button><button data-key="*" aria-label="Multiply by">×</button><button data-key="-" aria-label="Minus">−</button>
+    <button data-key="7" aria-label="Seven">7</button><button data-key="8" aria-label="Eight">8</button><button data-key="9" aria-label="Nine">9</button><button data-key="+" aria-label="Plus">+</button>
+    <button data-key="4" aria-label="Four">4</button><button data-key="5" aria-label="Five">5</button><button data-key="6" aria-label="Six">6</button><button data-key="=" aria-label="Equals">=</button>
+    <button data-key="1" aria-label="One">1</button><button data-key="2" aria-label="Two">2</button><button data-key="3" aria-label="Three">3</button><button data-key="." aria-label="Decimal separator">.</button>
+    <button data-key="0" aria-label="Zero">0</button>
+  </div>
+</section>
+<section id="notepad" hidden><textarea id="editor" aria-label="Text editor" spellcheck="false" autocomplete="off"></textarea></section>
+<script>
+(() => {
+  const mode=new URLSearchParams(location.search).get('mode')==='notepad'?'notepad':'calculator';
+  document.title=mode==='notepad'?'Notepad':'Calculator';document.getElementById('heading').textContent=document.title;
+  document.getElementById('calculator').hidden=mode!=='calculator';document.getElementById('notepad').hidden=mode!=='notepad';
+  const state=window.fixtureState={mode,clicks:0,writes:0,keys:[],display:'0'};
+  let left=null,operator=null,replace=true;
+  const display=document.getElementById('display'),editor=document.getElementById('editor');
+  // Native Cua omits the value of an empty Chromium textarea. A separate,
+  // explicitly seeded fixture lets the test verify authorized replacement
+  // and exact native readback without inventing an empty accessibility value.
+  if(mode==='notepad'&&new URLSearchParams(location.search).get('seeded')==='1')editor.value='Owned fixture seed text';
+  const show=value=>{state.display=String(value);display.textContent='Display is '+state.display;display.setAttribute('aria-label','Display is '+state.display);};
+  for(const button of document.querySelectorAll('[data-key]'))button.onclick=()=>{
+    const key=button.dataset.key;state.clicks++;state.keys.push(key);
+    if(key==='clear'){left=null;operator=null;replace=true;show('0');return;}
+    if(/^[0-9.]$/.test(key)){
+      let value=replace?'':state.display;replace=false;if(key==='.'&&value.includes('.'))return;
+      if(key==='.'&&!value)value='0';show(value==='0'&&key!=='.'?key:value+key);return;
+    }
+    if(key==='='){
+      const right=Number(state.display);let value=right;
+      if(operator==='+')value=left+right;else if(operator==='-')value=left-right;else if(operator==='*')value=left*right;else if(operator==='/')value=left/right;
+      show(value);operator=null;left=null;replace=true;return;
+    }
+    left=Number(state.display);operator=key;replace=true;
+  };
+  editor.addEventListener('input',()=>state.writes++);
+})();
+</script>
+</body>
+</html>

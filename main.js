@@ -1,14 +1,33 @@
 const {app,BrowserWindow,ipcMain,screen,desktopCapturer,safeStorage,shell,dialog,globalShortcut,Tray,Menu,nativeImage,Notification,clipboard,session}=require('electron');
+const {FolderAccess}=require('./folder-access');
 const fs=require('node:fs');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
 const {spawn}=require('node:child_process');
 const {tools,Store,SnapshotCache,createDispatcher,webURL,isoDate}=require('./core');
 const {AI}=require('./ai');
+const {localURL}=require('./local-ai');
+const {DEFAULT_MODEL,deepseekHeaders,deepseekModel,checkDeepSeek}=require('./deepseek-ai');
+const {LocalConversation}=require('./local-conversation');
+const {launchAndInspect}=require('./app-launch');
+let localConversation;
 const {openSpotifySearch,normalizeSpotifyWebURL}=require('./spotify');
 const {CuaClient}=require('./cua-client');
 const {ComputerUse}=require('./computer-use');
 const {ComputerVisual}=require('./computer-visual');
+const {namedTarget,matchingNamedTarget}=require('./visual-targets');
+const {compareImages}=require('./visual-change');
+const {refineBox,refineTarget}=require('./visual-grounding');
+const {DesktopRecovery}=require('./desktop-recovery');
+const {BrowserBridge}=require('./browser-bridge');
+const {prepareBrowserExtension}=require('./browser-install');
+const {executePlan}=require('./action-plan');
+const {NativePlanAdapter}=require('./native-plan-adapter');
+const {PlanTaskGuard}=require('./plan-task-guard');
+const {taskTimingSummary}=require('./task-timing');
+const {prepareTaskContext}=require('./task-program-host');
+const {runGuardedTaskProgram}=require('./task-program-runner');
+const {randomBytes}=require('node:crypto');
 const {ActivityOverlay}=require('./activity-overlay');
 const {DesktopActivity}=require('./desktop-activity');
 const {WakeListener,WakeService}=require('./wake-listener');
@@ -16,23 +35,44 @@ const {PetPresentation}=require('./pet-presentation');
 const petPresentation=new PetPresentation();
 const root=__dirname;
 const smoke=process.argv.includes('--smoke-test');
+if(smoke&&(process.argv.includes('--target-marks-test')||process.argv.includes('--window-recovery-test')||process.argv.includes('--rocket-native-test')||process.argv.includes('--general-plan-native-test')||process.argv.includes('--hybrid-workflow-test')||process.argv.includes('--task-program-native-test')))app.commandLine.appendSwitch('force-renderer-accessibility');
 app.setName('Mitch');
 // Only trusted bundled pages are loaded; spoken wake must play its ready cue
 // without a mouse gesture, including while the main window is hidden.
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 // Retain the existing profile identity so renaming keeps saved keys and notes.
 app.setPath('userData',path.join(app.getPath('appData'),'Pixie Windows Companion'));
-if(smoke) app.setPath('userData',path.join(process.cwd(),'test-output','profile'));
+if(smoke) app.setPath('userData',path.join(process.cwd(),'test-output',process.argv.includes('--provider-settings-test')?'deepseek-provider-profile':'profile'));
 app.setAppUserModelId('local.independent.pixie.windows');
-let main,pet,overlay,tray,store,ai,dispatch,quitting=false,inkMode=false,apiKey='',appsCache=[],lastAppsAt=0,voiceActive=false,voiceGeneration=0;
+let main,pet,overlay,tray,store,ai,dispatch,quitting=false,inkMode=false,apiKey='',deepseekKey='',appsCache=[],lastAppsAt=0,voiceActive=false,voiceGeneration=0;
 let computer,visual,cua,activityOverlay,desktopActivity,voiceActivityScope,administrator=false,voiceController=new AbortController();
 let wake;
+let appsLoading;
+let browserBridge,browserExtension,browserBridgeError='',folders;
+async function startBrowserBridge(){
+  if(smoke)return;
+  try{
+    let token;
+    if(store.data.encryptedBrowserBridgeKey)token=(await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedBrowserBridgeKey,'base64'))).result;
+    else{token=randomBytes(32).toString('base64url');store.data.encryptedBrowserBridgeKey=(await safeStorage.encryptStringAsync(token)).toString('base64');store.save();}
+    browserExtension=prepareBrowserExtension({source:path.join(root,'browser-extension'),destination:path.join(app.getPath('userData'),'browser-extension'),token});
+    browserBridge=new BrowserBridge({token,extensionId:browserExtension.extensionId,onStatus:status=>{if(!smoke)try{fs.writeFileSync(path.join(app.getPath('userData'),'browser-status.json'),JSON.stringify({...status,at:new Date().toISOString()}));}catch{}}});
+    await browserBridge.start();
+  }catch(error){browserBridgeError=error.message;}
+}
+function browserStatus(){return {...(browserBridge?.status()||{running:false,connected:0,browsers:[]}),message:browserBridgeError,directory:browserExtension?.directory||''};}
+function publishTaskTiming(timing){
+  const allowed=new Set(tools.map(tool=>tool.name));
+  const summary=taskTimingSummary(timing,allowed);
+  send('taskTiming',summary);
+  if(!smoke)try{fs.writeFileSync(path.join(app.getPath('userData'),'last-task-timing.json'),JSON.stringify(summary,null,2));}catch{}
+}
 const windowsChildren=new Set();
 const voiceCalls=new Map();
 const voiceContinuations=new Map(),voiceClaimedCalls=new Set();
 const appSnapshot=new SnapshotCache();
 const screenSnapshot=new SnapshotCache();
-let shapes=[],colorIndex=0;
+let shapes=[],colorIndex=0,marksDisplayId=null;
 const localPages=new Set(['index.html','pet.html','overlay.html'].map(f=>pathToFileURL(path.join(root,'ui',f)).href));
 function send(event,payload) { for(const win of [main,pet,overlay]) if(win&&!win.isDestroyed()) win.webContents.send('companion:'+event,payload); }
 function stateChanged() { send('stateChanged',{}); }
@@ -47,6 +87,32 @@ function publishPet(){
   pet.webContents.send('companion:petState',state);
 }
 function updateVoiceDisplay(message){if(petPresentation.update(message))publishPet();return {status:'ok'};}
+async function prepareVoiceDesktop(text,options){
+  const {signal}=options;
+  signal.throwIfAborted();
+  if(!store.data.settings.allowDesktop||computer?.paused||ai?.busy)return;
+  if(store.data.settings.workflowEngine)return ai.prepareTask(text,options);
+  await Promise.allSettled([apps(''),computer.listWindows({query:''})]);signal.throwIfAborted();
+}
+async function configureTaskPlanning(){
+  ai.prepareContext=async(text,options={})=>{
+    requireDesktop();options.signal?.throwIfAborted();
+    const ownedScope=options.activityScope==null,activityScope=options.activityScope??desktopActivity.beginScope();
+    const context={...options,activityScope,readOnly:true,assertActive:()=>{options.signal?.throwIfAborted();requireDesktop();desktopActivity.assertScope(activityScope);}};
+    try{return await prepareTaskContext({text,context,dispatch:(name,args)=>dispatch.readOnly(name,args,context)});}
+    finally{if(ownedScope)desktopActivity.endScope(activityScope);}
+  };
+  if(store.data.encryptedProcedures){
+    try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedProcedures,'base64'));ai.procedures.import(JSON.parse(unlocked.result));}
+    catch{ai.procedures.clear();}
+  }
+  let saving=Promise.resolve();
+  ai.onProceduresChanged=rows=>{
+    // Procedures may contain interface text. Persist only through Windows secure storage.
+    const json=JSON.stringify(rows);
+    saving=saving.then(async()=>{if(!await safeStorage.isAsyncEncryptionAvailable())return;store.data.encryptedProcedures=(await safeStorage.encryptStringAsync(json)).toString('base64');store.save();}).catch(()=>{});
+  };
+}
 function wakeStateChanged(status) {
   petPresentation.setWake(status.status);publishPet();
   send('wakeState',status);
@@ -68,8 +134,31 @@ function ps(data) {
     child.stdin.end(JSON.stringify(data));
   });
 }
+function folderHelper(data,{signal,assertActive}={}){
+  signal?.throwIfAborted();assertActive?.();
+  return new Promise((resolve,reject)=>{
+    const helperRoot=app.isPackaged?root.replace(/app\.asar$/, 'app.asar.unpacked'):root;
+    const child=spawn(path.join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-NonInteractive','-STA','-ExecutionPolicy','Bypass','-File',path.join(helperRoot,'folder-helper.ps1')],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+    windowsChildren.add(child);let output='',done=false;
+    const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);error?reject(error):resolve(value);};
+    const abort=()=>{child.kill();finish(signal.reason||Error('Folder operation cancelled.'));};
+    const timer=setTimeout(()=>{child.kill();finish(Error('Windows folder operation timed out.'));},15000);
+    child.stdout.setEncoding('utf8');child.stdout.on('data',value=>{output+=value;if(output.length>1000000){child.kill();finish(Error('Windows folder response exceeded its limit.'));}});
+    child.stderr.resume();child.stdin.on('error',error=>finish(error));
+    child.once('error',error=>{windowsChildren.delete(child);finish(error);});
+    child.once('close',()=>{windowsChildren.delete(child);if(done)return;try{signal?.throwIfAborted();assertActive?.();finish(null,JSON.parse(output.trim()));}catch(error){finish(error);}});
+    signal?.addEventListener('abort',abort,{once:true});
+    if(signal?.aborted){abort();return;}
+    child.stdin.end(JSON.stringify(data));
+  });
+}
 function secureWindow(options,page) {
   const win=new BrowserWindow({...options,webPreferences:{preload:path.join(root,'preload.js'),nodeIntegration:false,contextIsolation:true,sandbox:true,backgroundThrottling:false}});
+  if(smoke){
+    win.webContents.on('console-message',event=>{if(event.level==='error')console.error('Renderer:',event.message);});
+    const execute=win.webContents.executeJavaScript.bind(win.webContents);
+    win.webContents.executeJavaScript=async(code,...args)=>{try{return await execute(code,...args);}catch(error){throw new Error('Smoke renderer command failed: '+code.slice(0,180)+' — '+error.message);}};
+  }
   win.webContents.setWindowOpenHandler(()=>({action:'deny'}));
   win.webContents.on('will-navigate',e=>e.preventDefault());
   win.loadFile(path.join(root,'ui',page)); return win;
@@ -97,10 +186,14 @@ function makeWindows() {
   for(const [key,fn]of Object.entries(shortcuts)) if(!globalShortcut.register(key,fn)) send('notice',`Shortcut ${key} is already used by another app.`);
 }
 function updateOverlay() { if(overlay&&!overlay.isDestroyed()){overlay.webContents.send('companion:overlay',{shapes,inkMode});if(shapes.length||inkMode)overlay.showInactive();else overlay.hide();} }
+function selectMarksDisplay(display){
+  if(marksDisplayId!==display.id||['x','y','width','height'].some(k=>overlay.getBounds()[k]!==display.bounds[k]))shapes=[];
+  marksDisplayId=display.id;overlay.setBounds(display.bounds);
+}
 function setInk(value) {
   inkMode=!!value;
   if(inkMode) {
-    const b=targetDisplay().bounds;overlay.setBounds(b);overlay.setFocusable(true);overlay.setIgnoreMouseEvents(false);overlay.show();overlay.focus();
+    selectMarksDisplay(targetDisplay());overlay.setFocusable(true);overlay.setIgnoreMouseEvents(false);overlay.show();overlay.focus();
     globalShortcut.register('Escape',()=>setInk(false));
   } else { overlay.setIgnoreMouseEvents(true,{forward:true});overlay.setFocusable(false);globalShortcut.unregister('Escape'); }
   send('inkMode',inkMode); updateOverlay(); return {status:inkMode?'drawing':'finished'};
@@ -108,6 +201,7 @@ function setInk(value) {
 function requireDesktop() { if(!store.data.settings.allowDesktop) throw new Error('Enable desktop actions in Settings first.');if(computer?.paused)throw new Error('Computer use is paused. Click Resume computer use in Settings.'); }
 function computerStatus() {return {installed:fs.existsSync(cua.executable),running:cua.running,version:cua.version||null,paused:computer.paused,enabled:store.data.settings.allowDesktop,administrator};}
 async function stopTasks() {
+  localConversation?.stop();
   updateVoiceDisplay({type:'status',state:'idle'});
   ai?.cancel();dispatch?.cancel();voiceController.abort();voiceController=new AbortController();voiceGeneration++;voiceActive=false;voiceCalls.clear();
   desktopActivity?.stop();voiceActivityScope=null;
@@ -125,11 +219,15 @@ async function performControl(kind,args,context) {
   if(kind==='click'&&control.name!==args.expected_name) throw new Error('The requested label does not match the inspected control.');
   context.assertActive();requireDesktop();
   appSnapshot.get(args.snapshot);
-  return ps({action:kind,pid:snapshot.window.pid,handle:snapshot.window.handle,control_id:control.id,expected_name:args.expected_name,text:args.text});
+  try{return await ps({action:kind,pid:snapshot.window.pid,handle:snapshot.window.handle,control_id:control.id,expected_name:args.expected_name,text:args.text});}
+  catch(error){error.action_attempted=true;throw error;}
 }
 async function apps(query) {
-  if(Date.now()-lastAppsAt>60000){appsCache=(await ps({action:'apps'})).apps;lastAppsAt=Date.now();}
-  return appsCache.filter(a=>a.name.toLowerCase().includes(query.toLowerCase())).slice(0,60).map(a=>({name:a.name,app_id:a.id}));
+  if(Date.now()-lastAppsAt>60000){
+    if(!appsLoading)appsLoading=ps({action:'apps'}).then(result=>{appsCache=result.apps;lastAppsAt=Date.now();}).finally(()=>{appsLoading=null;});
+    await appsLoading;
+  }
+  return appsCache.filter(a=>(a.name+' '+a.id).toLowerCase().includes(query.toLowerCase())).slice(0,60).map(a=>({name:a.name,app_id:a.id}));
 }
 async function capture() {
   if(!store.data.settings.allowScreen) throw new Error('Enable screen sharing in Settings first.');
@@ -143,7 +241,7 @@ async function capture() {
     if(!source||source.thumbnail.isEmpty())throw new Error('Could not capture the selected display.');
     let image=source.thumbnail;
     // Overlay user marks into the image without exposing the overlay toolbar or companion window.
-    if(shapes.length) {
+    if(shapes.length&&marksDisplayId===display.id) {
       overlay.setBounds(display.bounds); updateOverlay();
       const rendered=await overlay.webContents.executeJavaScript('window.exportMarks()');
       image=nativeImage.createFromDataURL(await main.webContents.executeJavaScript(`window.mergeScreenshot(${JSON.stringify(image.toDataURL())},${JSON.stringify(rendered)})`));
@@ -151,10 +249,32 @@ async function capture() {
     return screenSnapshot.set({dataURL:image.toDataURL(),displayId:display.id,bounds:display.bounds,width:image.getSize().width,height:image.getSize().height});
   } finally {if(wasMain)main.showInactive();if(wasPet)pet.showInactive();updateOverlay();}
 }
-function addShape(args) {
-  const shot=screenSnapshot.get(args.snapshot);if(shot.displayId!==targetDisplay().id)throw new Error('Selected display changed. Capture it again.');
+async function addShape(args,context={}) {
+  if(!store.data.settings.allowScreen)throw new Error('Enable screen sharing before annotating the screen.');
+  const shot=screenSnapshot.get(args.snapshot),display=targetDisplay();if(shot.displayId!==display.id||['x','y','width','height'].some(key=>shot.bounds[key]!==display.bounds[key]))throw new Error('Selected display or its geometry changed. Capture it again.');
+  if(context.fromModel&&['circle','rectangle'].includes(args.shape)){
+    const box=await refineBox({nativeImage,image:shot.dataURL,box:{left:Math.min(args.x,args.x2),top:Math.min(args.y,args.y2),right:Math.max(args.x,args.x2),bottom:Math.max(args.y,args.y2)},label:args.target_label,locate:(image,label,signal)=>ai.locate(image,label,signal),signal:context.signal});
+    context.assertActive();screenSnapshot.get(args.snapshot);if(!store.data.settings.allowScreen)throw new Error('Screen sharing was disabled while locating the target.');
+    if(targetDisplay().id!==display.id||['x','y','width','height'].some(k=>targetDisplay().bounds[k]!==display.bounds[k]))throw new Error('Display geometry changed while locating the target. Capture it again.');
+    args={...args,x:box.left,y:box.top,x2:box.right,y2:box.bottom};
+  }
+  selectMarksDisplay(display);
   const color=args.color==='auto'?['green','yellow','blue'][colorIndex++%3]:args.color;
   if(shapes.length>=200)shapes.shift();shapes.push({...args,color});overlay.setBounds(shot.bounds);updateOverlay();return {status:'drawn'};
+}
+async function drawComputerTarget(args,context){
+  const state=visual.getSnapshot(args.snapshot,context),target=namedTarget(state,args);
+  if(state.target.kind!=='window')throw new Error('Observe the exact target window first.');
+  await visual.verifyGeometry(state,context);visual.getSnapshot(args.snapshot,context);
+  const f=state.captureBounds,b=target.box;
+  const rect=screen.screenToDipRect(null,{x:Math.round(f.x+b.left*f.width),y:Math.round(f.y+b.top*f.height),width:Math.round((b.right-b.left)*f.width),height:Math.round((b.bottom-b.top)*f.height)});
+  const display=screen.getDisplayMatching(rect),d=display.bounds;
+  if(rect.x<d.x||rect.y<d.y||rect.x+rect.width>d.x+d.width||rect.y+rect.height>d.y+d.height)throw new Error('This target crosses display boundaries. Move it fully onto one display and observe again.');
+  selectMarksDisplay(display);
+  const color=args.color==='auto'?['green','yellow','blue'][colorIndex++%3]:args.color;
+  shapes.push({shape:args.shape,color,x:(rect.x-d.x)/d.width,y:(rect.y-d.y)/d.height,x2:(rect.x+rect.width-d.x)/d.width,y2:(rect.y+rect.height-d.y)/d.height});
+  if(shapes.length>200)shapes.shift();overlay.setBounds(d);updateOverlay();
+  return {status:'drawn',target:target.name,source:'Windows accessibility bounds from the same screenshot',display_id:display.id};
 }
 async function readCalendar({from,to}) {
   const start=new Date(isoDate(from)),end=new Date(isoDate(to));
@@ -175,22 +295,43 @@ async function readCalendar({from,to}) {
   return {status:'ok',source:'imported ICS snapshot; not live sync',events:result.sort((a,b)=>a.start.localeCompare(b.start)),limit:250};
 }
 function makeDispatcher() {
+  folders=new FolderAccess({helper:folderHelper});
   const handlers={
+    folders_find:async(a,context)=>{requireDesktop();return folders.find(a,context);},
+    folders_open:async(a,context)=>{requireDesktop();return folders.open(a,context);},
     list_apps:async a=>({status:'ok',apps:await apps(a.query)}),
-    open_app:async a=>{requireDesktop();await apps('');const item=appsCache.find(x=>x.id===a.app_id);if(!item)throw new Error('Use an exact app_id returned by list_apps.');await new Promise((resolve,reject)=>{const launcher=spawn(path.join(process.env.SystemRoot,'explorer.exe'),['shell:AppsFolder\\'+item.id],{windowsHide:true,stdio:'ignore'});launcher.once('spawn',resolve);launcher.once('error',reject);});return {status:'launch_requested',app:item.name};},
+    open_app:async (a,context)=>{requireDesktop();await apps('');const item=appsCache.find(x=>x.id===a.app_id);if(!item)throw new Error('Use an exact app_id returned by list_apps.');return launchAndInspect({app:item,computer,signal:context.signal,launch:()=>new Promise((resolve,reject)=>{const launcher=spawn(path.join(process.env.SystemRoot,'explorer.exe'),['shell:AppsFolder\\'+item.id],{windowsHide:true,stdio:'ignore'});launcher.once('spawn',resolve);launcher.once('error',reject);})});},
     open_website:async a=>{const url=normalizeSpotifyWebURL(webURL(a.url));await shell.openExternal(url);return {status:'opened',url};},
     search_web:async a=>{await shell.openExternal('https://www.google.com/search?q='+encodeURIComponent(a.query));return {status:'opened_search'};},
+    browser_list_tabs:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.list(a,context);},
+    browser_close_tabs:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.close(a,context);},
+    browser_activate_tab:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.activate(a,context);},
+    browser_read_page:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.observePage(a,context);},
+    browser_execute_plan:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.executePagePlan(a,context);},
+    browser_follow_link:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.followLink(a,context);},
+    browser_open_tab:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.openTab(a,context);},
+    computer_run_workflow:async(a,context)=>{requireDesktop();if(!store.data.settings.workflowEngine)throw Error('Workflow execution is disabled.');return runGuardedTaskProgram({program:a,bindings:context.workflowBindings||{},dispatch:context.dispatchChild,context,replay:context.workflowReplay});},
     inspect_app:async a=>{requireDesktop();const result=await ps({action:'inspect',query:a.query});if(result.status==='inspected'){const snapshot=appSnapshot.set(result);return {...result,snapshot:snapshot.id};}return result;},
     click_app_control:async (a,context)=>{requireDesktop();return performControl('click',a,context);},
     type_in_app:async (a,context)=>{requireDesktop();return performControl('type',a,context);},
     computer_list_windows:async a=>{requireDesktop();return computer.listWindows(a);},
     computer_find_window:async (a,context)=>{requireDesktop();return computer.findWindow(a,context);},
     computer_restore_window:async (a,context)=>{requireDesktop();return computer.restore(a,context);},
+    computer_focus_window:async (a,context)=>{requireDesktop();return computer.focus(a,context);},
     computer_observe:async (a,context)=>{requireDesktop();return visual.observe(a,context);},
-    computer_input:async (a,context)=>{requireDesktop();return visual.input(a,context);},
+    computer_input:async (a,context)=>{
+      requireDesktop();
+      if(context.fromModel&&['click','double_click','right_click'].includes(a.kind)&&a.target_id===undefined){
+        const state=visual.getSnapshot(a.snapshot,context),target=matchingNamedTarget(state,a.target_label);
+        if(target){const {target_box,target_label,...rest}=a;a={...rest,target_id:target.target_id,expected_name:target.name};}
+        else{if(a.target_box===undefined&&store.data.settings.localGrounding!==true)throw Error('Experimental label-only targeting is off. Use a measured target or provide target_box and target_label from the current screenshot. No input was sent.');const box=await refineTarget({nativeImage,image:state.image,box:a.target_box,label:a.target_label,propose:(image,label,signal)=>ai.proposeTarget(image,label,signal),locate:(image,label,signal)=>ai.locate(image,label,signal),signal:context.signal});context.assertActive();a={...a,target_box:box};}
+      }
+      return visual.input(a,context);
+    },
     computer_inspect_window:async a=>{requireDesktop();return computer.inspect(a);},
     computer_action:async (a,context)=>{requireDesktop();return computer.action(a,context);},
     computer_action_sequence:async (a,context)=>{requireDesktop();return computer.sequence(a,context);},
+    computer_execute_plan:async(a,context)=>{requireDesktop();const initial=computer.getSnapshot(a.snapshot,computer.generation);return executePlan({steps:a.steps,completion:a.completion,adapter:new NativePlanAdapter({computer,target:initial.window,context,initialSnapshot:initial}),context});},
     control_media:async a=>{requireDesktop();return ps({action:'media',key:a.action});},
     search_spotify:async a=>{requireDesktop();return openSpotifySearch(a.query,uri=>shell.openExternal(uri));},
     create_note:a=>{const item=store.add('notes',{title:a.title,text:a.text});stateChanged();return {status:'saved',id:item.id,title:item.title};},
@@ -202,16 +343,26 @@ function makeDispatcher() {
     list_alerts:()=>({status:'ok',alerts:store.data.alerts.filter(a=>!a.notified)}),
     cancel_alert:a=>{const item=store.data.alerts.find(x=>x.id===a.id&&!x.notified);if(!item)throw new Error('Pending alert not found.');item.notified=true;item.cancelled=true;store.save();stateChanged();return {status:'cancelled'};},
     read_calendar:readCalendar,
-    look_at_screen:async (a,context)=>{const shot=await capture();context.assertActive();const findings=await ai.see(shot.dataURL,a.question,context.signal);context.assertActive();return {status:'captured',snapshot:shot.id,width:shot.width,height:shot.height,findings};},
-    draw_on_screen:addShape,draw_screen_path:addShape,
+    look_at_screen:async (a,context)=>{const shot=await capture();context.assertActive();return {status:'captured',snapshot:shot.id,width:shot.width,height:shot.height,coordinate_system:'normalized_0_1',question:a.question,message:'Use this exact image for annotations. Coordinates refer to the full image, not a window within it.',_images:[{data_url:shot.dataURL,detail:'high'}]};},
+    draw_on_screen:addShape,draw_screen_path:addShape,draw_computer_target:drawComputerTarget,
     clear_screen_drawings:()=>{shapes=[];updateOverlay();return {status:'cleared'};},
     set_pixie_size:a=>{petPresentation.setSize(a.size);publishPet();return {status:'resized',size:a.size};}
   };
   const desktopTools=['list_apps','open_app','open_website','search_web','inspect_app','click_app_control','type_in_app','computer_list_windows','computer_find_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_observe','computer_input','control_media','search_spotify','look_at_screen'];
   const visualInvalidators=new Set(['open_app','open_website','search_web','inspect_app','click_app_control','type_in_app','computer_find_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','control_media','search_spotify','look_at_screen']);
+  desktopTools.push('folders_find','folders_open');visualInvalidators.add('folders_open');
+  desktopTools.push('computer_focus_window');visualInvalidators.add('computer_focus_window');
+  desktopTools.push('browser_list_tabs','browser_close_tabs','browser_activate_tab');
+  desktopTools.push('browser_read_page','browser_execute_plan','computer_execute_plan');
+  desktopTools.push('browser_follow_link','browser_open_tab','computer_run_workflow');
+  visualInvalidators.add('browser_follow_link');visualInvalidators.add('browser_open_tab');visualInvalidators.add('computer_run_workflow');
+  visualInvalidators.add('browser_execute_plan');visualInvalidators.add('computer_execute_plan');
+  visualInvalidators.add('browser_close_tabs');visualInvalidators.add('browser_activate_tab');
+  const recovery=new DesktopRecovery({computer,visual,legacySnapshot:id=>appSnapshot.value?.id===id?appSnapshot.value:null,scopeActive:scope=>desktopActivity.scopes.has(scope)});
+  const planGuard=new PlanTaskGuard();
   for(const name of desktopTools){
     const handler=handlers[name];
-    handlers[name]=(args,context)=>desktopActivity.run(context.activityScope,async()=>{context.assertActive();if(visualInvalidators.has(name))visual?.clear();return handler(args,context);});
+    handlers[name]=(args,context)=>desktopActivity.run(context.activityScope,async()=>{context.assertActive();const execute=()=>{if(visualInvalidators.has(name))visual?.clear();if(['browser_close_tabs','browser_activate_tab','browser_execute_plan','browser_follow_link','browser_open_tab'].includes(name)){computer.snapshots.clear();appSnapshot.value=null;}return handler(args,context);};return planGuard.run(name,context,()=>context.fromModel?recovery.run(name,args,context,execute):execute());});
   }
   dispatch=createDispatcher(handlers,name=>send('activity',{name,label:name==='set_pixie_size'?'resize Mitch':name.replaceAll('_',' ')}));
 }
@@ -223,6 +374,11 @@ function handle(name,fn,pages=['index.html']) {
   });
 }
 function registerIPC() {
+  handle('localVoiceStart',()=>{if(ai.busy)throw new Error('Wait for the current reply.');return localConversation.start();});
+  handle('localVoiceStop',()=>{localConversation.stop();return {status:'stopped'};});
+  handle('localVoiceInput',(generation,sampleRate)=>localConversation.beginInput(generation,sampleRate));
+  handle('localVoiceAudio',(data,generation,inputId)=>localConversation.appendInput(Buffer.from(data),generation,inputId));
+  handle('localVoiceTurn',async(data,generation,inputId,streamFailed)=>{const scope=desktopActivity.beginScope();try{return await localConversation.turn(Buffer.from(data),generation,scope,inputId,streamFailed);}finally{desktopActivity.endScope(scope);}});
   handle('voiceDisplay',updateVoiceDisplay);
   handle('petState',()=>petPresentation.snapshot(),['pet.html']);
   handle('wakeStatus',()=>wake.status());
@@ -230,21 +386,53 @@ function registerIPC() {
   handle('claimMicrophone',(kind,wakeId)=>wake.claim(kind,wakeId));
   handle('releaseMicrophone',id=>{wake.release(id);return {status:'ok'};});
   handle('computerStatus',()=>computerStatus());
+  handle('browserStatus',browserStatus);
+  handle('browserExtensionFolder',async()=>{if(!browserExtension?.directory)throw Error(browserBridgeError||'Browser extension files are not ready.');const error=await shell.openPath(browserExtension.directory);if(error)throw Error(error);return browserStatus();});
+  handle('taskTiming',()=>ai.lastTaskTiming||null);
+  handle('groundingStatus',()=>ai.groundingStatus());
   handle('checkComputer',async()=>{requireDesktop();return desktopActivity.run(null,async()=>{const result=await computer.listWindows({query:''});send('computerState',computerStatus());return {...computerStatus(),windowsFound:result.windows.length};});});
   handle('stopTasks',stopTasks,['index.html','pet.html']);
   handle('resumeComputer',()=>{if(!store.data.settings.allowDesktop)throw new Error('Enable and save Desktop actions first.');computer.resume();send('computerState',computerStatus());return computerStatus();});
-  handle('state',()=>({version:app.getVersion(),settings:{...store.data.settings,screenId:String(targetDisplay().id)},hasKey:!!apiKey,screens:screen.getAllDisplays().map(d=>({id:String(d.id),label:d.label||`Display ${d.id}`,width:d.size.width,height:d.size.height})),calendar:fs.existsSync(path.join(app.getPath('userData'),'calendar.ics')),voiceActive}));
+  handle('state',()=>({version:app.getVersion(),settings:{...store.data.settings,screenId:String(targetDisplay().id)},hasKey:!!apiKey,hasDeepSeekKey:!!deepseekKey,screens:screen.getAllDisplays().map(d=>({id:String(d.id),label:d.label||`Display ${d.id}`,width:d.size.width,height:d.size.height})),calendar:fs.existsSync(path.join(app.getPath('userData'),'calendar.ics')),voiceActive}));
   handle('saveSettings',async values=>{
     if(!values||typeof values!=='object')throw new Error('Invalid settings.');
+    if(ai.busy||voiceActive||localConversation.active)throw new Error('End the current conversation before changing AI settings.');
+    if(values.chatProvider!==undefined&&!['local','deepseek'].includes(values.chatProvider))throw new Error('Invalid chat provider.');
+    if(values.transcriptionProvider!==undefined&&values.transcriptionProvider!=='local')throw new Error('Dictation stays local.');
+    if(values.localGrounding!==undefined&&typeof values.localGrounding!=='boolean')throw new Error('Invalid visual targeting setting.');
+    const workflowSettings={};for(const key of ['workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows']){if(values[key]!==undefined&&typeof values[key]!=='boolean')throw Error('Invalid workflow setting.');workflowSettings[key]=values[key]??store.data.settings[key]??true;}
+    const localGrounding=values.localGrounding??store.data.settings.localGrounding??false;
+    const localSettings={chatProvider:values.chatProvider||'local',transcriptionProvider:'local',localChatModel:values.localChatModel||'mitch-local',localChatUrl:values.localChatUrl||'http://127.0.0.1:22130/v1',localSpeechUrl:values.localSpeechUrl||'http://127.0.0.1:22132',deepseekChatModel:values.deepseekChatModel||store.data.settings.deepseekChatModel||DEFAULT_MODEL};
+    localURL(localSettings.localChatUrl,'chat/completions');localURL(localSettings.localSpeechUrl,'transcribe');
+    if(!/^[a-zA-Z0-9._/-]{1,160}$/.test(localSettings.localChatModel))throw new Error('Invalid local model name.');
+    deepseekModel(localSettings.deepseekChatModel);
+    const nextDeepSeekKey=values.deepseekKey||deepseekKey;
+    if(localSettings.chatProvider==='deepseek'){
+      deepseekHeaders(nextDeepSeekKey);
+    }
+    let encryptedDeepSeekKey=store.data.encryptedDeepSeekKey||'';
+    if(values.deepseekKey){deepseekHeaders(values.deepseekKey);if(!await safeStorage.isAsyncEncryptionAvailable())throw new Error('Windows secure storage is unavailable.');encryptedDeepSeekKey=(await safeStorage.encryptStringAsync(values.deepseekKey)).toString('base64');}
     for(const key of ['voiceModel','chatModel','transcriptionModel']) {if(typeof values[key]!=='string'||!/^[a-zA-Z0-9._-]{1,80}$/.test(values[key]))throw new Error('Invalid model name.');}
     if(values.key){if(typeof values.key!=='string'||values.key.length>500||/\s/.test(values.key))throw new Error('Invalid API key.');if(!await safeStorage.isAsyncEncryptionAvailable())throw new Error('Windows secure storage is unavailable.');store.data.encryptedKey=(await safeStorage.encryptStringAsync(values.key)).toString('base64');apiKey=values.key;}
     if(store.data.settings.screenId!==String(values.screenId||'')){shapes=[];screenSnapshot.value=null;updateOverlay();}
     const desktopWasEnabled=store.data.settings.allowDesktop,wakeWasEnabled=store.data.settings.wakeEnabled;
     store.data.settings={voiceModel:values.voiceModel,chatModel:values.chatModel,transcriptionModel:values.transcriptionModel,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
+    Object.assign(store.data.settings,localSettings);
+    store.data.settings.localGrounding=localGrounding;
+    Object.assign(store.data.settings,workflowSettings);
+    Object.assign(store.data.settings,{localOnly:true,transcriptionProvider:'local',localVoiceLanguage:'en-us'});
+    store.data.encryptedDeepSeekKey=encryptedDeepSeekKey;deepseekKey=nextDeepSeekKey;ai.history=[];
     store.save();if(desktopWasEnabled&&!values.allowDesktop)await stopTasks();
-    await wake.configure({enabled:values.wakeEnabled,available:!!apiKey});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
+    await wake.configure({enabled:values.wakeEnabled,available:true});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
   });
-  handle('deleteKey',async()=>{apiKey='';store.data.encryptedKey='';store.save();await wake.configure({enabled:store.data.settings.wakeEnabled,available:false});stateChanged();return {status:'removed'};});
+  handle('deleteKey',async()=>{apiKey='';store.data.encryptedKey='';store.save();await wake.configure({enabled:store.data.settings.wakeEnabled,available:true});stateChanged();return {status:'removed'};});
+  handle('deleteDeepSeekKey',()=>{if(ai.busy||localConversation.active)throw new Error('End the current conversation first.');deepseekKey='';store.data.encryptedDeepSeekKey='';store.save();stateChanged();return {status:'removed'};});
+  handle('testDeepSeek',values=>{
+    if(!values||typeof values!=='object')throw new Error('Invalid connection settings.');
+    if(ai.busy||localConversation.active)throw new Error('End the current conversation first.');
+    const key=values.deepseekKey||deepseekKey;
+    return checkDeepSeek(fetch,values,key,AbortSignal.timeout(120000));
+  });
   handle('chat',async text=>{const scope=desktopActivity.beginScope();try{return await ai.chat(text,undefined,scope);}finally{desktopActivity.endScope(scope);}});
   handle('resetChat',()=>{if(ai.busy)throw new Error('Wait for the current reply.');ai.history=[];return {status:'cleared'};});
   handle('voiceOffer',sdp=>ai.voice(sdp));
@@ -268,7 +456,7 @@ function registerIPC() {
     const generation=voiceGeneration,signal=voiceController.signal;
     if(!voiceActivityScope)voiceActivityScope=desktopActivity.beginScope();
     const activityScope=voiceActivityScope;
-    const result=(async()=>{try{if(generation!==voiceGeneration)throw new Error('Session ended.');return await dispatch(call.name,JSON.parse(call.arguments),{signal,activityScope});}catch(e){return {status:'error',message:e.message};}})();voiceCalls.set(call.call_id,result);return result.then(publicVoiceOutput);
+    const result=(async()=>{try{if(generation!==voiceGeneration)throw new Error('Session ended.');return await dispatch(call.name,JSON.parse(call.arguments),{signal,activityScope,fromModel:true});}catch(e){return {status:'error',message:e.message};}})();voiceCalls.set(call.call_id,result);return result.then(publicVoiceOutput);
   });
   handle('voiceContinue',async(callIds,generation)=>{
     if(!voiceActive||generation!==voiceGeneration)throw new Error('Voice session ended.');
@@ -298,6 +486,73 @@ function registerIPC() {
 }
 async function smokeTest() {
   const dir=path.join(process.cwd(),'test-output');fs.mkdirSync(dir,{recursive:true});
+  if(process.argv.includes('--folder-access-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;
+    const reportFile=path.join(dir,'folder-packaged-integration.json');
+    try{
+      const report=await require(path.join(process.cwd(),'scripts','test-folder-access.js')).run({
+        AIClass:AI,FolderAccessClass:FolderAccess,dispatch,
+        directory:path.join(dir,app.isPackaged?'folder-packaged':'folder-source'),
+        beginScope:()=>desktopActivity.beginScope(),endScope:scope=>desktopActivity.endScope(scope),
+      });
+      fs.writeFileSync(reportFile,JSON.stringify({...report,version:app.getVersion(),packaged:app.isPackaged},null,2));
+    }catch(error){
+      fs.writeFileSync(reportFile,JSON.stringify({status:'failed',version:app.getVersion(),packaged:app.isPackaged,error:error.message},null,2));throw error;
+    }finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--task-program-native-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;store.data.settings.workflowEngine=true;
+    try{await require('./tests/task-program-native-integration')({BrowserWindow,computer,dispatch,desktopActivity,directory:dir,version:app.getVersion()});}
+    finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--hybrid-workflow-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;
+    try{await require('./tests/hybrid-workflow-integration')({BrowserWindow,computer,dispatch,desktopActivity,directory:dir,version:app.getVersion()});}
+    finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--general-plan-native-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;
+    try{await require('./tests/general-plan-native-integration')({BrowserWindow,computer,dispatch,desktopActivity,directory:dir,version:app.getVersion()});}
+    finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--rocket-native-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;
+    try{await require('./tests/rocket-native-integration')({BrowserWindow,computer,dispatch,desktopActivity,directory:dir,version:app.getVersion()});}
+    finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--voice-popup-test')){
+    await require('./tests/voice-popup-integration')({main,pet,localConversation,directory:dir,version:app.getVersion()});
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--provider-settings-test')){
+    await require('./tests/deepseek-settings-smoke')({main,store,ai,safeStorage,directory:dir});
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--visual-center-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=true;
+    const scope=desktopActivity.beginScope();
+    try{await require('./tests/visual-integration')({BrowserWindow,screen,dispatch,activityScope:scope,directory:dir,version:app.getVersion()});}
+    finally{desktopActivity.endScope(scope);await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--target-marks-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=true;
+    const scope=desktopActivity.beginScope();
+    try{await require('./tests/measured-target-integration')({BrowserWindow,screen,dispatch,overlay,activityScope:scope,directory:dir});}
+    finally{desktopActivity.endScope(scope);await computer.stop();}
+    quitting=true;app.quit();return;
+  }
+  if(process.argv.includes('--window-recovery-test')){
+    store.data.settings.allowDesktop=true;store.data.settings.allowScreen=true;
+    try{await require('./tests/window-recovery-integration')({BrowserWindow,dispatch,computer,desktopActivity,directory:dir});}
+    finally{await computer.stop();}
+    quitting=true;app.quit();return;
+  }
   await main.webContents.executeJavaScript('document.fonts.ready');
   await new Promise(r=>setTimeout(r,600));
   const assert=require('node:assert/strict');
@@ -307,7 +562,25 @@ async function smokeTest() {
   const png=await main.webContents.capturePage();fs.writeFileSync(path.join(dir,'home.png'),png.toPNG());
   await main.webContents.executeJavaScript("document.querySelector('[data-page=settings]').click()");
   await new Promise(r=>setTimeout(r,100));
+  await main.webContents.executeJavaScript('window.companion.saveSettings('+JSON.stringify({...state.settings,chatProvider:'local',transcriptionProvider:'local'})+')');
+  const localState=await main.webContents.executeJavaScript('window.companion.state()');
+  assert.equal(localState.settings.chatProvider,'local');assert.equal(localState.settings.transcriptionProvider,'local');
+  await main.webContents.executeJavaScript('loadState()');
+  for(const name of ['workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows'])assert.equal(await main.webContents.executeJavaScript(`document.getElementById(${JSON.stringify(name)}).checked`),state.settings[name]!==false,'Workflow setting must survive save/load: '+name);
+  assert.equal(await main.webContents.executeJavaScript("document.getElementById('chatProvider').value"),'local');
+  assert.equal(await main.webContents.executeJavaScript("document.getElementById('setupBanner').hidden"),true);
+  await main.webContents.executeJavaScript('window.companion.saveSettings('+JSON.stringify(state.settings)+')');
+  await main.webContents.executeJavaScript('loadState()');
   fs.writeFileSync(path.join(dir,'settings.png'),(await main.webContents.capturePage()).toPNG());
+  if(process.argv.includes('--capture-controls-test')){
+    assert.equal(await main.webContents.executeJavaScript("!!document.getElementById('microphoneInput')"),true);
+    assert.equal(await main.webContents.executeJavaScript("document.getElementById('sendVoice')===null&&document.getElementById('autoSendVoice')===null"),true);
+    await main.webContents.executeJavaScript("live.listening=true;live.change('active','Listening locally… pause when finished')");
+    fs.writeFileSync(path.join(dir,'capture-controls.png'),(await main.webContents.capturePage()).toPNG());
+    await main.webContents.executeJavaScript('live.cleanup()');
+    fs.writeFileSync(path.join(dir,'capture-controls-result.json'),JSON.stringify({status:'passed',checks:['local settings load','microphone selector exists','manual send controls removed','voice cleanup'],scope:'Synthetic controls; no real microphone recording.'}));
+    return;
+  }
   const computerBefore=await main.webContents.executeJavaScript('window.companion.computerStatus()');assert.equal(computerBefore.installed,true);
   if(app.isPackaged)assert.equal(computerBefore.administrator,true,'Packaged Mitch must launch as Administrator.');
   store.data.settings.allowDesktop=true;
@@ -432,17 +705,35 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     cua=new CuaClient({executable:path.join(helperRoot,'vendor','cua-driver','cua-driver.exe')});
     // Desktop permission is granted once in Settings. Target and cancellation checks still run per action.
     computer=new ComputerUse({client:cua,getSettings:()=>store.data.settings,confirm:async()=>true,restoreWindow:args=>ps({action:'restore_window',...args})});
-    visual=new ComputerVisual({computer});
+    visual=new ComputerVisual({computer,compareImages:(before,after)=>compareImages(nativeImage,before,after)});
     wake=new WakeService({listener:new WakeListener({helper:path.join(helperRoot,'wake-word.ps1')}),onState:wakeStateChanged,onWake:event=>{if(main&&!main.isDestroyed())main.webContents.send('companion:wakeDetected',event);}});
     if(store.data.encryptedKey){try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedKey,'base64'));apiKey=unlocked.result;if(unlocked.shouldReEncrypt){store.data.encryptedKey=(await safeStorage.encryptStringAsync(apiKey)).toString('base64');store.save();}}catch{dialog.showErrorBox('API key unavailable','Windows could not unlock the saved key. Enter it again in Settings.');}}
+    if(store.data.encryptedDeepSeekKey){try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedDeepSeekKey,'base64'));deepseekKey=unlocked.result;if(unlocked.shouldReEncrypt){store.data.encryptedDeepSeekKey=(await safeStorage.encryptStringAsync(deepseekKey)).toString('base64');store.save();}}catch{dialog.showErrorBox('DeepSeek key unavailable','Windows could not unlock the DeepSeek key. Enter it again in Settings.');}}
     session.defaultSession.setPermissionRequestHandler((contents,permission,callback,details)=>callback(permission==='media'&&localPages.has(contents.getURL())&&contents===main?.webContents&&!details.mediaTypes?.includes('video')));
     session.defaultSession.setPermissionCheckHandler((contents,permission)=>permission==='media'&&contents===main?.webContents&&localPages.has(contents.getURL()));
-    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch);ai.onVoiceError=failVoice;registerIPC();makeWindows();
+    await startBrowserBridge();
+    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch,undefined,async()=>deepseekKey);ai.onTaskTiming=publishTaskTiming;localConversation=new LocalConversation(ai,()=>store.data.settings,undefined,{prepare:prepareVoiceDesktop,notify:event=>{if(main&&!main.isDestroyed())main.webContents.send('companion:localVoiceProgress',event);}});ai.onVoiceError=failVoice;registerIPC();makeWindows();await configureTaskPlanning();
     main.webContents.on('render-process-gone',()=>stopTasks().catch(()=>{}));
-    main.webContents.once('did-finish-load',()=>{if(!smoke)wake.configure({enabled:store.data.settings.wakeEnabled,available:!!apiKey}).catch(error=>send('notice',error.message));});
+    main.webContents.once('did-finish-load',()=>{if(!smoke)wake.configure({enabled:store.data.settings.wakeEnabled,available:true}).catch(error=>send('notice',error.message));});
     setInterval(()=>{const due=store.due();for(const item of due){if(Notification.isSupported())new Notification({title:'Mitch reminder',body:item.title}).show();send('notice',item.title);}if(due.length)stateChanged();},1000).unref();
-    if(smoke){await new Promise(r=>main.webContents.once('did-finish-load',r));await smokeTest();}
+    if(smoke){if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));await smokeTest();}
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--deepseek-live-test')){
+      if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
+      await require('./tests/deepseek-live-smoke')({main,ai,directory:path.join(root,'test-output')});
+    }
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--deepseek-thinking-test')){
+      if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
+      await require('./tests/deepseek-thinking-live')({ai,directory:path.join(root,'test-output')});
+      main.show();main.focus();
+    }
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--calculator-agent-test')){
+      if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
+      await require('./tests/calculator-agent-integration')({ai,main,dispatch,desktopActivity,computer,directory:path.join(root,'test-output')});
+    }
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--grounding-audit'))await require('./tests/grounding-audit')({ai,directory:path.join(root,'test-output')});
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--grounding-refinement-audit'))await require('./tests/grounding-refinement-audit')({ai,nativeImage,directory:path.join(root,'test-output')});
   }).catch(error=>{fs.mkdirSync(path.join(process.cwd(),'test-output'),{recursive:true});fs.writeFileSync(path.join(process.cwd(),'test-output','startup-error.txt'),error.stack);if(!smoke)dialog.showErrorBox('Companion could not start',error.message);app.exit(1);});
 }
-app.on('before-quit',()=>{quitting=true;wake?.close().catch(()=>{});globalShortcut.unregisterAll();ai?.cancel();ai?.closeVoice();dispatch?.cancel();voiceController.abort();visual?.clear();desktopActivity?.stop();activityOverlay?.destroy();computer?.stop().catch(()=>{});for(const child of windowsChildren)child.kill();});
+app.on('before-quit',()=>{quitting=true;localConversation?.stop();wake?.close().catch(()=>{});globalShortcut.unregisterAll();ai?.cancel();ai?.closeVoice();dispatch?.cancel();voiceController.abort();visual?.clear();desktopActivity?.stop();activityOverlay?.destroy();computer?.stop().catch(()=>{});for(const child of windowsChildren)child.kill();});
 app.on('window-all-closed',()=>{if(quitting)app.quit();});
+app.on('before-quit',()=>{browserBridge?.stop().catch(()=>{});});

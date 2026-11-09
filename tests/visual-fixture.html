@@ -22,7 +22,7 @@
   'use strict';
   const canvas=document.getElementById('playground'),ctx=canvas.getContext('2d');
   const editor=document.getElementById('editor'),scroll=document.getElementById('scroll');
-  const state={clicks:0,doubleClicks:0,rightClicks:0,pointerMoves:0,lastPointer:null,dragStarted:0,dragCompleted:0,dragMoves:0,editorClicks:0,typedEvents:0,saveCount:0,savedText:'',keys:[]};
+  const state={clicks:0,doubleClicks:0,rightClicks:0,pointerMoves:0,lastPointer:null,clickLocations:{},dragStarted:0,dragCompleted:0,dragMoves:0,editorClicks:0,typedEvents:0,saveCount:0,savedText:'',keys:[]};
   const targets={click:{x:20,y:18,w:154,h:65},doubleClick:{x:194,y:18,w:154,h:65},rightClick:{x:368,y:18,w:154,h:65},dragStart:{x:55,y:151},dragEnd:{x:620,y:151}};
   let dragPosition={...targets.dragStart},dragging=false;
   const inside=(point,box)=>point.x>=box.x&&point.x<=box.x+box.w&&point.y>=box.y&&point.y<=box.y+box.h;
@@ -36,9 +36,10 @@
     ctx.fillStyle=state.dragCompleted?'#13a47b':'#2567d9';ctx.beginPath();ctx.arc(dragPosition.x,dragPosition.y,21,0,Math.PI*2);ctx.fill();ctx.fillStyle='#fff';ctx.font='11px Segoe UI';ctx.fillText('DRAG',dragPosition.x,dragPosition.y);
     ctx.fillStyle='#526078';ctx.font='12px Segoe UI';ctx.fillText('Drag the blue circle into the outlined square',352,192);update();
   }
-  canvas.addEventListener('click',event=>{if(inside(point(event),targets.click)){state.clicks++;update();}});
-  canvas.addEventListener('dblclick',event=>{if(inside(point(event),targets.doubleClick)){state.doubleClicks++;update();}});
-  canvas.addEventListener('contextmenu',event=>{event.preventDefault();if(inside(point(event),targets.rightClick)){state.rightClicks++;update();}});
+  const recordClick=(name,event)=>{state.clickLocations[name]={x:event.clientX,y:event.clientY};};
+  canvas.addEventListener('click',event=>{if(inside(point(event),targets.click)){state.clicks++;recordClick('click',event);update();}});
+  canvas.addEventListener('dblclick',event=>{if(inside(point(event),targets.doubleClick)){state.doubleClicks++;recordClick('double_click',event);update();}});
+  canvas.addEventListener('contextmenu',event=>{event.preventDefault();if(inside(point(event),targets.rightClick)){state.rightClicks++;recordClick('right_click',event);update();}});
   canvas.addEventListener('pointerdown',event=>{const p=point(event);if(event.button===0&&Math.hypot(p.x-dragPosition.x,p.y-dragPosition.y)<=24){dragging=true;state.dragStarted++;canvas.setPointerCapture(event.pointerId);}});
   canvas.addEventListener('pointermove',event=>{state.pointerMoves++;state.lastPointer=point(event);if(!dragging)return;dragPosition=point(event);state.dragMoves++;draw();});
   canvas.addEventListener('pointerup',event=>{if(!dragging)return;dragging=false;dragPosition=point(event);if(Math.hypot(dragPosition.x-targets.dragEnd.x,dragPosition.y-targets.dragEnd.y)<33)state.dragCompleted++;if(canvas.hasPointerCapture(event.pointerId))canvas.releasePointerCapture(event.pointerId);draw();});
@@ -46,7 +47,7 @@
   for(let i=1;i<=32;i++){const row=document.createElement('div');row.className='row';row.textContent=`Scroll row ${i}`;scroll.appendChild(row);}
   scroll.addEventListener('scroll',update);
   editor.addEventListener('input',()=>{state.typedEvents++;update();});
-  editor.addEventListener('click',()=>{state.editorClicks++;update();});
+  editor.addEventListener('click',event=>{state.editorClicks++;recordClick('text',event);update();});
   document.addEventListener('keydown',event=>{state.keys.push({key:event.key,ctrl:event.ctrlKey,alt:event.altKey,shift:event.shiftKey,meta:event.metaKey});if(state.keys.length>40)state.keys.shift();if(event.ctrlKey&&event.key.toLowerCase()==='s'){event.preventDefault();state.saveCount++;state.savedText=editor.value;update();}});
   window.fixture={
     readState:()=>({...state,keys:state.keys.map(key=>({...key})),text:editor.value,selectionStart:editor.selectionStart,selectionEnd:editor.selectionEnd,scrollTop:scroll.scrollTop,dragPosition:{...dragPosition},activeElement:document.activeElement?.id||''}),
@@ -54,7 +55,8 @@
       const c=canvas.getBoundingClientRect(),e=editor.getBoundingClientRect(),s=scroll.getBoundingClientRect();
       const local=p=>({x:c.left+p.x*c.width/canvas.width,y:c.top+p.y*c.height/canvas.height});
       const center=box=>local({x:box.x+box.w/2,y:box.y+box.h/2});
-      return{width:innerWidth,height:innerHeight,click:center(targets.click),double_click:center(targets.doubleClick),right_click:center(targets.rightClick),drag_start:local(targets.dragStart),drag_end:local(targets.dragEnd),text:{x:e.left+e.width/2,y:e.top+e.height/2},scroll:{x:s.left+s.width/2,y:s.top+s.height/2}};
+      const box=b=>{const a=local(b),z=local({x:b.x+b.w,y:b.y+b.h});return{left:a.x,top:a.y,right:z.x,bottom:z.y};};
+      return{width:innerWidth,height:innerHeight,boxes:{click:box(targets.click),double_click:box(targets.doubleClick),right_click:box(targets.rightClick),text:{left:e.left,top:e.top,right:e.right,bottom:e.bottom}},click:center(targets.click),double_click:center(targets.doubleClick),right_click:center(targets.rightClick),drag_start:local(targets.dragStart),drag_end:local(targets.dragEnd),text:{x:e.left+e.width/2,y:e.top+e.height/2},scroll:{x:s.left+s.width/2,y:s.top+s.height/2}};
     },
   };
   draw();

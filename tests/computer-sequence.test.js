@@ -150,15 +150,21 @@ test('unverified typing, provider refusal, and timeout stop rather than replayin
   }
 });
 
-test('known unconditional clicks can continue with complete observations without claiming verified success',async()=>{
+test('an unverified duplicate click is not sent when controls remain unchanged after the first',async()=>{
   const f=fixture({act:()=>result({effect:'unverifiable'})}),initial=await f.read();
   const outcome=await f.service.sequence({snapshot:initial.snapshot,actions:[typeThenSave[1],typeThenSave[1]]});
-  assert.equal(outcome.status,'unverified');assert.equal(outcome.verified,false);
-  assert.deepEqual([outcome.completed,outcome.attempted,outcome.total,outcome.confirmed],[2,2,2,0]);
-  assert.equal(f.inputs().length,2);
-  assert.deepEqual(f.inputs().map(call=>call.args.element_token),['s1:save','s2:save']);
+  assert.equal(outcome.status,'interrupted');assert.equal(outcome.verified,false);
+  assert.deepEqual([outcome.completed,outcome.attempted,outcome.total,outcome.confirmed],[1,1,2,0]);
+  assert.equal(f.inputs().length,1);
+  assert.deepEqual(f.inputs().map(call=>call.args.element_token),['s1:save']);
   assert.ok(outcome.results.every(step=>step.verified===false&&step.effect==='unverifiable'));
-  assert.match(outcome.message,/final observation|delivery alone/i);
+  assert.match(outcome.message,/duplicate was not sent/i);
+});
+test('explicit repeated Calculator digits remain valid even when leading zeroes do not change the display',async()=>{
+  const f=fixture({act:()=>result({effect:'unverifiable'}),observe:revision=>({window_title:'Calculator',elements:controls(revision).map(c=>c.label==='Save'?{...c,label:'Zero'}:c),elements_complete:true})}),initial=await f.read();
+  const action={kind:'click',control_id:'0',expected_name:'Zero'};
+  const outcome=await f.service.sequence({snapshot:initial.snapshot,actions:[action,action]});
+  assert.equal(outcome.status,'unverified');assert.equal(f.inputs().length,2);
 });
 
 test('unverifiable typing must read back its exact fresh field value before a later click can run',async()=>{

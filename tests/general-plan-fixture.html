@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'self'">
+<title>Mitch General Plan Fixture</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:30px;background:#f6f4ef;color:#263124;font:18px 'Segoe UI',sans-serif}h1{font-size:25px}p{font-size:15px;color:#56634f}label{display:block;margin:18px 0 8px}input,button,select{font:18px 'Segoe UI',sans-serif;padding:12px;border:1px solid #829576;border-radius:6px;background:white;color:#263124}input{width:100%}button{margin-top:18px;min-width:160px;cursor:pointer}#stage{padding:18px;border:1px solid #c4cebc;border-radius:8px;min-height:220px}button:focus-visible,input:focus-visible{outline:3px solid #4d794a}iframe{width:100%;height:120px;border:1px solid #c4cebc}
+</style>
+</head>
+<body>
+<h1>Mitch general plan test</h1>
+<p>This owned fixture has no accounts, network actions or saved documents.</p>
+<main id="stage"></main>
+<script>
+(() => {
+  const stage=document.getElementById('stage');let generation=0;
+  const element=(tag,attributes={},text)=>{const node=document.createElement(tag);for(const [key,value] of Object.entries(attributes))node.setAttribute(key,value);if(text!==undefined)node.textContent=text;return node;};
+  const button=(name,handler)=>{const node=element('button',{'aria-label':name},name);node.onclick=handler;return node;};
+  const field=(name,value)=>{const label=element('label',{for:'field'},name);const input=element('input',{id:'field','aria-label':name,type:'text',autocomplete:'off'});input.value=value;input.addEventListener('input',()=>window.fixtureState.inputEvents++);stage.append(label,input);return input;};
+  const record=name=>window.fixtureState.actions.push(name);
+  const edit=()=>{
+    record('edit');window.fixtureState.stage='edit';stage.replaceChildren(element('h2',{},'Edit result'));
+    const input=field('Name','Original name');
+    stage.append(button('Save',()=>{record('save');window.fixtureState.savedName=input.value;window.fixtureState.stage='saved';stage.replaceChildren(element('h2',{},'Saved '+input.value),button('Saved '+input.value,()=>record('saved-indicator')));}));
+  };
+  window.resetFixture=(mode='normal')=>{
+    generation++;const current=generation;window.fixtureState={mode,stage:'search',actions:[],inputEvents:0,query:'',savedName:'',generation};stage.replaceChildren();
+    if(mode==='ambiguous'){
+      stage.append(button('Search',()=>record('duplicate-first')),button('Search',()=>record('duplicate-second')));return true;
+    }
+    if(mode==='frame'){
+      stage.append(button('Top frame action',()=>record('top-frame')));
+      const frame=element('iframe',{title:'Owned child frame',srcdoc:'<!doctype html><button aria-label="Child-only action">Child-only action</button>'});stage.append(frame);return true;
+    }
+    const input=field('Search','Fixture seed');
+    stage.append(button('Search',()=>{
+      record('search');window.fixtureState.query=input.value;window.fixtureState.stage='loading';stage.replaceChildren(element('p',{},'Loading owned result…'));
+      setTimeout(()=>{if(current!==generation)return;window.fixtureState.stage='results';stage.replaceChildren(element('h2',{},'Result for '+window.fixtureState.query),button('Edit first result',edit));},80);
+    }));
+    return true;
+  };
+  window.resetFixture(new URLSearchParams(location.search).get('mode')||'normal');
+})();
+</script>
+</body>
+</html>

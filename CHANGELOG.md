@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0-local.22
+
+- Adds optional DeepSeek chat/planning alongside local Qwen; OpenAI API calls are disabled in this edition. CPU Nemotron recognition and Kokoro speech synthesis remain separate local services.
+- Adds live voice captions, a red Working popup, and bounded read-only preparation while speaking.
+- Adds authenticated browser tab/page controls, direct Windows folder access, conditional desktop workflows, and guarded procedure reuse. Unknown action outcomes stop without automatic input replay.
+- Adds optional local GoClick targeting, off by default, with independent target verification and visual fallback.
+- Includes latency diagnostics, reproducible fixtures, deployment scripts, and regression tests. Measured fixture timings do not guarantee general task completion or a universal 1–5 second response.
+- Incorporates the MIT license, contribution/security documentation, CI, and packaging safeguards from the distribution branch. Packaging includes the Browser Bridge source and folder helper while excluding pairing secrets and local model environments.
+
 ## 0.5.2 and earlier
 
 0.5.2: The floating companion shows Connecting and Listening immediately,
