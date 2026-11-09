@@ -6,3 +6,16 @@ outputs/
 vendor/
 .env*
 *.log
+
+# Local credentials and user data
+.npmrc
+*.pem
+*.key
+*.p12
+*.pfx
+library.json
+library.json.tmp
+calendar.ics
+wake-status.json
+.DS_Store
+Thumbs.db
