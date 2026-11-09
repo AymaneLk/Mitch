@@ -8,6 +8,16 @@ const call=(name,args)=>({tool_calls:[{id:name,function:{name,arguments:JSON.str
 const review=(decision,answer,reason='')=>({content:JSON.stringify({decision,answer,reason})});
 const observation={status:'inspected',snapshot:'frame',controls:[{control_id:'1',name:'Lire',type:'Button'}]};
 
+test('complete empty plan observations establish absence without a redundant inspection',()=>{
+  for(const name of ['computer_execute_plan','browser_execute_plan']){
+    const evidence=new DesktopEvidence();
+    evidence.record(name,{status:'completed',verified:true,observation:{snapshot:'empty',complete:true,controls:[]}});
+    assert.equal(evidence.touched,true);assert.equal(evidence.needsObservation,false);
+    evidence.record(name,{status:'interrupted',outcome_unknown:true,observation:{snapshot:'unknown',complete:true,controls:[]}});
+    assert.equal(evidence.needsObservation,true);
+  }
+});
+
 test('Spotify completion requires the playlist content and interprets transport actions as the opposite current state',()=>{
   const state={window:{title:'Spotify'},controls:[{name:'Accueil',type:'Heading'},{name:'Titres likés',type:'Link'},{name:'Lire',type:'Button'}]};
   assert.equal(spotifyCompletion('Open Spotify and go to my liked songs.',state).decision,'continue');
@@ -60,7 +70,7 @@ test('launch-only success is held until a fresh observation and an evidence-only
   const responses=[call('open_app',{app_id:'spotify'}),{content:'The song is playing.'},call('computer_find_window',{query:'Spotify'}),{content:'The song is playing.'},review('complete','Spotify is open.')];
   const ai=new AI(settings,()=>assert.fail('No cloud'),async name=>{actions.push(name);return name==='open_app'?{status:'launch_requested'}:observation;},async(_url,opt)=>{requests.push(JSON.parse(opt.body));return reply(responses.shift());});
   assert.equal(await ai.chat('Open Spotify.'),'Spotify is open.');
-  assert.deepEqual(actions,['open_app','computer_find_window']);
+  assert.deepEqual(actions,['list_apps','open_app','computer_find_window']);
   const audit=requests.at(-1);
   assert.equal(audit.tools,undefined);
   assert.equal(audit.response_format.type,'json_schema');

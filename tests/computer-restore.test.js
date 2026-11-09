@@ -15,6 +15,7 @@ function fixture(options={}){
     calls.push({name,args});
     if(name==='start_session')return result({active:true});
     if(name==='list_windows')return result({windows:options.windows||[windowRow]});
+    if(name==='bring_to_front')return result(options.focusResult||{landed_on_target:true,now_fg_hwnd:identity.window_id});
     if(name==='get_window_state'){
       reads++;
       return result(await options.read?.(reads,args)??readyState);
@@ -26,16 +27,16 @@ function fixture(options={}){
   return {service,calls,restores,reads:()=>reads,discover:()=>service.listWindows({query:'calc'})};
 }
 
-test('window discovery includes visible and minimized windows but omits fully hidden windows',async()=>{
+test('window discovery retains titled off-screen windows as well as visible and minimized ones',async()=>{
   const visible={...windowRow,pid:43,window_id:124,minimized:false,is_on_screen:true};
   const hidden={...windowRow,pid:44,window_id:125,minimized:false,is_on_screen:false};
   const f=fixture({windows:[windowRow,visible,hidden]});
   const list=await f.discover();
   assert.deepEqual(list.windows.map(row=>({pid:row.pid,minimized:row.minimized,on_screen:row.on_screen})),[
-    {pid:42,minimized:true,on_screen:false},{pid:43,minimized:false,on_screen:true},
+    {pid:42,minimized:true,on_screen:false},{pid:43,minimized:false,on_screen:true},{pid:44,minimized:false,on_screen:false},
   ]);
   assert.deepEqual(f.calls.find(call=>call.name==='list_windows').args,{on_screen_only:false});
-  assert.equal(f.service.windows.has('44:125'),false);
+  assert.equal(f.service.windows.has('44:125'),true);
 });
 
 test('findWindow gives restore guidance for minimized apps and never guesses between host and ghost',async()=>{
@@ -121,4 +122,23 @@ test('native helper failure or absent restoration capability propagates without 
 test('restore schema permits only positive exact native identity fields',()=>{
   assert.doesNotThrow(()=>validateTool('computer_restore_window',identity));
   for(const invalid of [{pid:0,window_id:123},{pid:42,window_id:-1},{pid:42,window_id:'123'},{...identity,query:'Calculator'},{...identity,expected_title:'Injected title'}])assert.throws(()=>validateTool('computer_restore_window',invalid),/Invalid action arguments/);
+});
+
+test('focus reuses the fresh restored observation and still verifies foreground identity last',async()=>{
+  const f=fixture();await f.discover();const focused=await f.service.focus(identity);
+  assert.equal(f.reads(),1);assert.equal(f.restores.length,1);
+  assert.equal(focused.focus_verified,true);assert.equal(focused.controls[0].name,'Six');
+  assert.deepEqual(f.calls.slice(-2).map(call=>call.name),['get_window_state','bring_to_front']);
+  assert.equal(f.service.getSnapshot(focused.snapshot,f.service.generation).id,focused.snapshot);
+});
+
+test('focus after restoration cannot accept a different foreground window',async()=>{
+  const f=fixture({focusResult:{landed_on_target:false,now_fg_hwnd:987}});await f.discover();
+  await assert.rejects(f.service.focus(identity),/did not confirm focus/);assert.equal(f.reads(),1);
+});
+
+test('focus does not add a fifth read after a persistently partial restore',async()=>{
+  const f=fixture({read:()=>({...readyState,degraded:true})});await f.discover();
+  const focused=await f.service.focus(identity);
+  assert.equal(f.reads(),4);assert.equal(focused.degraded,true);assert.equal(focused.focus_verified,true);
 });

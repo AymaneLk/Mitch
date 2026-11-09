@@ -28,3 +28,17 @@ test('wake changes cannot replace conversation status and giant size survives ex
   pet.update({type:'status',state:'idle'});assert.equal(pet.snapshot().width,360);assert.equal(pet.snapshot().label,'Microphone in use');
   pet.setWake('paused');assert.equal(pet.snapshot().label,'Paused');
 });
+
+test('working state keeps the user transcript, replaces acknowledgement with the answer, and resets on Stop',()=>{
+  const pet=new PetPresentation();pet.update({type:'status',state:'active',phase:'listening'});
+  pet.update({type:'caption',speaker:'You',delta:'open calc',replace:true});
+  pet.update({type:'caption',speaker:'You',delta:'Open Calculator.',replace:true});
+  pet.update({type:'status',state:'active',phase:'working'});
+  pet.update({type:'caption',speaker:'Mitch',delta:"Got it. I'm on it.",replace:true});
+  pet.setWake('busy');assert.equal(pet.snapshot().label,'Working…');assert.equal(pet.snapshot().phase,'working');
+  assert.equal(pet.snapshot().turns[0].text,'Open Calculator.');
+  pet.update({type:'caption',speaker:'Mitch',delta:'Calculator is open.',replace:true});
+  assert.deepEqual(pet.snapshot().turns.map(t=>t.text),['Open Calculator.','Calculator is open.']);
+  pet.update({type:'status',state:'active',phase:'speaking'});assert.equal(pet.snapshot().label,'Speaking…');
+  pet.update({type:'status',state:'idle'});assert.equal(pet.snapshot().phase,null);assert.deepEqual(pet.snapshot().turns,[]);
+});

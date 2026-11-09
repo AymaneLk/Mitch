@@ -4,7 +4,7 @@ document.getElementById('face').onclick=()=>api.window('open');
 talk.onclick=()=>api.window('voice');
 function render(state){
   if(state.revision<revision)return;revision=state.revision;
-  pet.className=['pet',state.state,state.size,state.expanded?'expanded':''].join(' ');
+  pet.className=['pet',state.state,state.phase||'',state.size,state.expanded?'expanded':''].join(' ');
   document.getElementById('status').textContent=state.label;
   const action=state.state==='idle'?'Start talking':state.state==='connecting'?'Cancel connection':'End conversation';
   talk.title=action;talk.setAttribute('aria-label',action);talk.disabled=state.state==='closing';

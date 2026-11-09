@@ -1,0 +1,5 @@
+<!doctype html><meta charset="utf-8"><title>Mitch local popup test</title>
+<style>body{font:18px sans-serif;padding:35px;background:#f5f2eb}button{font:18px sans-serif;padding:20px}</style>
+<h1>Local window recovery test</h1><p>This fixture has no network access and contacts nobody.</p>
+<button id="open">Open test popup</button><output id="count">0</output>
+<script>window.clicks=0;document.getElementById('open').onclick=()=>{document.getElementById('count').textContent=++window.clicks;setTimeout(()=>window.open('popup-window.html','local-recovery-popup','width=420,height=280'),100);};</script>

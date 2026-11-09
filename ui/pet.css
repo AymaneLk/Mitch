@@ -17,7 +17,15 @@ i:after{content:'';position:absolute;inset:25% 28%;background:#1c211b}
 .active .status-dot{background:#c5e9a0;box-shadow:0 0 8px #c5e9a044;animation:pulse 1.8s infinite}
 .connecting .status-dot{background:#edc795;animation:pulse 1s infinite}
 .live-label{display:none;color:#9bba86;font-size:9px;letter-spacing:1.5px;padding-left:7px;border-left:1px solid #ffffff20}
-.active .live-label{display:inline}
+.active.listening .live-label{display:inline}
+.pet.working{background:#a52330;color:#fff5f5;border-color:#ffb7bd66}
+.working .grip,.working .status{color:#ffe5e7}
+.working i,.working #talk span,.working .status-dot{background:#fff1f2}
+.working i:after{background:#a52330}
+.working .status-dot{box-shadow:0 0 8px #ffc2c666}
+.working .speaker,.working .caption[data-speaker="Mitch"] .speaker,.working .words,.working .current .words{color:#fff5f5}
+.working .caption{border-top-color:#ffffff24;background:#ffffff08}
+.working .caption.current{background:#ffffff12}
 #captions:not(:empty){padding:0 12px 8px}
 .caption{height:72px;padding:9px 12px 8px;border-top:1px solid #ffffff0d;background:#ffffff04;overflow:hidden}
 .caption:first-child{border-radius:12px 12px 0 0}.caption:last-child{border-radius:0 0 12px 12px}.caption:only-child{border-radius:12px}

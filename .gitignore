@@ -8,3 +8,4 @@ vendor/
 *.log
 __pycache__/
 *.pyc
+browser-extension/config.js

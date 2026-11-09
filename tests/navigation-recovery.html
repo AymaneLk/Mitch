@@ -1,0 +1,9 @@
+<!doctype html><meta charset="utf-8"><title>Mitch local navigation recovery fixture</title>
+<style>body{font:18px sans-serif;padding:35px;background:#f5f2eb}button{font:18px sans-serif;padding:20px;margin:10px}</style>
+<h1 id="heading">Home</h1><p>Local test only. No network, messages, or calls.</p>
+<button id="messages">Messages</button><button id="contact" hidden>Test contact</button>
+<script>
+window.inputs={messages:0,contact:0};
+document.getElementById('messages').onclick=()=>{window.inputs.messages++;document.getElementById('heading').textContent='Inbox';document.getElementById('contact').hidden=false;};
+document.getElementById('contact').onclick=()=>{window.inputs.contact++;document.getElementById('heading').textContent='Test conversation';};
+</script>

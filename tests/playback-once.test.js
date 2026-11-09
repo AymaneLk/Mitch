@@ -7,7 +7,7 @@ const {DesktopEvidence,unverifiedReply}=require('../desktop-evidence');
 const call=(name,args)=>({type:'function_call',call_id:Math.random().toString(36),name,arguments:JSON.stringify(args)});
 const say=text=>({type:'message',role:'assistant',content:[{type:'output_text',text}]});
 const see=()=>call('computer_find_window',{query:'Spotify'});
-const click=()=>call('computer_input',{snapshot:'frame',kind:'click',x:0.5,y:0.9});
+const click=()=>call('computer_input',{snapshot:'frame',kind:'click',target_box:{left:.45,top:.85,right:.55,bottom:.95}});
 const key=()=>call('computer_input',{snapshot:'frame',kind:'key',key:'space'});
 const frame=playing=>({status:'inspected',snapshot:'frame',window:{title:'Spotify'},controls:[{control_id:'transport',name:playing?'Pause':'Lire',type:'Button'}]});
 
@@ -69,7 +69,7 @@ test('one playback request cannot hide multiple inputs inside a sequence or doub
   const e=new DesktopEvidence();const text='Play the music on Spotify.';
   const transport={kind:'click',control_id:'transport',expected_name:'Lire'};
   assert.equal(e.guard(text,'computer_action_sequence',{snapshot:'frame',actions:[transport,transport]}).input_suppressed,true);
-  assert.equal(e.guard(text,'computer_input',{snapshot:'frame',kind:'double_click',x:0.5,y:0.9}).input_suppressed,true);
+  assert.equal(e.guard(text,'computer_input',{snapshot:'frame',kind:'double_click',target_box:{left:.45,top:.85,right:.55,bottom:.95}}).input_suppressed,true);
   assert.equal(e.mediaAttempted,false,'Rejected operations do not consume the allowed single click');
   assert.equal(e.guard(text,'computer_action_sequence',{snapshot:'frame',actions:[transport]}),null);
   e.admit(text,'computer_action_sequence',{snapshot:'frame',actions:[transport]});

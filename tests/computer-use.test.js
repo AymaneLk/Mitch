@@ -35,6 +35,22 @@ function fixture(options = {}) {
 }
 const inspect = async f => { if (!f.service.windows.size && !f.service.paused) await f.service.listWindows(); return f.service.inspect({ pid: 42, window_id: 123 }); };
 
+test('generic provider failures after dispatch preserve uncertain delivery for the agent guard',async()=>{
+  const f=fixture({call:async name=>name==='click'?{isError:true,structuredContent:{code:'tool_invocation_failed',effect:'refused'}}:undefined}),before=await inspect(f);
+  await assert.rejects(f.service.action({snapshot:before.snapshot,kind:'click',control_id:'0',expected_name:'Save'}),error=>error.code==='tool_invocation_failed'&&error.action_attempted===true&&error.refused===false);
+  assert.equal(f.calls.filter(c=>c.name==='click').length,1);
+});
+test('focusing reads controls before raising and verifies the exact foreground window without clicks',async()=>{
+  const f=fixture({call:async name=>name==='bring_to_front'?{structuredContent:{now_fg_hwnd:'0x7b',landed_on_target:true}}:undefined});
+  await f.service.listWindows();const focused=await f.service.focus({pid:42,window_id:123});
+  assert.equal(focused.focus_verified,true);assert.equal(focused.window.window_id,123);
+  assert.deepEqual(f.calls.slice(-2).map(c=>c.name),['get_window_state','bring_to_front']);assert.equal(f.calls.filter(c=>c.name==='click').length,0);
+});
+test('focus does not claim success when Windows reports a different foreground window',async()=>{
+  const f=fixture({call:async name=>name==='bring_to_front'?{structuredContent:{now_fg_hwnd:'0x99',landed_on_target:false}}:undefined});
+  await f.service.listWindows();await assert.rejects(f.service.focus({pid:42,window_id:123}),/did not confirm focus/);
+});
+
 test('fast cursor timing is scoped once per session and reapplied after reconnect or Resume', async()=>{
   const f=fixture();f.client.connectionId=1;
   await inspect(f);await inspect(f);

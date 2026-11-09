@@ -1,8 +1,8 @@
 'use strict';
 
-const mutations=new Set(['open_app','open_website','search_web','search_spotify','control_media','click_app_control','type_in_app','computer_restore_window','computer_action','computer_action_sequence','computer_input']);
-const observations=new Set(['inspect_app','look_at_screen','computer_find_window','computer_inspect_window','computer_observe']);
-const playbackInputs=new Set(['computer_action','computer_action_sequence','computer_input','click_app_control','type_in_app','control_media']);
+const mutations=new Set(['folders_open','open_app','open_website','search_web','search_spotify','control_media','click_app_control','type_in_app','computer_restore_window','computer_action','computer_action_sequence','computer_input','browser_close_tabs','browser_activate_tab','browser_execute_plan','computer_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab']);
+const observations=new Set(['folders_find','inspect_app','look_at_screen','computer_find_window','computer_focus_window','computer_inspect_window','computer_observe','browser_list_tabs','browser_read_page']);
+const playbackInputs=new Set(['computer_execute_plan','browser_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab','computer_action','computer_action_sequence','computer_input','click_app_control','type_in_app','control_media']);
 const verificationTools=new Set([...observations,'computer_list_windows','list_apps']);
 const unverifiedReply="I couldn't verify that the desktop task finished. Please check the app before trying again.";
 const cleanRequest=text=>text.trim().replace(/[.!?]+$/,'').replace(/^(?:(?:can|could|would) you\s+)?(?:please\s+)?/i,'');
@@ -57,6 +57,7 @@ class DesktopEvidence {
     if(!intent)return null;
     const blocked=message=>({status:'error',input_suppressed:true,message});
     if(this.mediaAttempted&&!verificationTools.has(name))return blocked('Playback input was already attempted for this request. Verification is read-only: inspect its result, but do not click, press a key, switch input tools, or replay an uncertain action.');
+    if(['computer_execute_plan','browser_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab'].includes(name))return blocked('Use one observed playback input, then verify its result. A multi-step plan is unnecessary for this simple playback request.');
     if(name==='control_media')return blocked('Use the intended player\'s observed Play or Pause button. A global media key does not express the requested playback state and can toggle the wrong way.');
     if(name==='computer_action_sequence'&&(args.actions?.length!==1||args.actions[0].kind!=='click'))return blocked('Use one observed playback click. A sequence of inputs can reverse playback more than once.');
     if(name==='type_in_app'||(['computer_input','computer_action'].includes(name)&&['type','double_click','right_click','drag'].includes(args.kind)))return blocked('This simple playback request permits one click or keyboard input, not text entry, a drag or multiple clicks.');
@@ -77,10 +78,13 @@ class DesktopEvidence {
     if(output?.status==='not_needed'||output?.input_suppressed)return;
     if(mutations.has(name)){this.needsObservation=true;this.frames.clear();this.latest=null;}
     const state=output?.observation??output;
+    if(name==='folders_open'&&output?.verified===true&&output.foreground_verified===true&&/^[A-Za-z]:[\\/]/.test(output.path||'')&&!output.outcome_unknown){this.latest={state:output,created:this.now()};this.needsObservation=false;return;}
     if(output?.status==='error'||!state?.snapshot)return;
     this.latest={state,created:this.now()};
     if(state.controls?.length){this.frames.clear();this.frames.set(state.snapshot,{state,created:this.now()});}
-    if(state.controls?.length||state._images?.length||output?._images?.length||(name==='look_at_screen'&&state.findings))this.needsObservation=false;
+    const browserObservation=name.startsWith('browser_')&&state.status==='ok'&&state.complete===true&&Array.isArray(state.tabs)&&typeof state.session_id==='string'&&!output.outcome_unknown;
+    const completeControls=Array.isArray(state.controls)&&state.complete===true&&!state.degraded&&!state.truncated&&!state.accessibility_partial&&!output.outcome_unknown;
+    if(browserObservation||completeControls||state.controls?.length||state._images?.length||output?._images?.length||(name==='look_at_screen'&&state.findings))this.needsObservation=false;
   }
 }
 

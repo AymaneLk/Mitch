@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; object-src 'none'; base-uri 'none'">
+<title>Mitch GitHub menu fixture</title>
+<style>
+body{margin:0;padding:32px;font:18px 'Segoe UI',sans-serif;background:#f6f8fa;color:#1f2328}main{max-width:650px;margin:auto}header{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #d1d9e0;padding-bottom:22px}button,a{font:16px 'Segoe UI',sans-serif;padding:12px 16px;border:1px solid #8c959f;border-radius:6px;background:white;color:#1f2328}button{cursor:pointer}nav{margin:20px 0 0 auto;width:270px;padding:14px;border:1px solid #d1d9e0;border-radius:8px;background:white}nav a{display:block;text-decoration:none}p{font-size:15px;color:#59636e}button:focus-visible,a:focus-visible{outline:3px solid #0969da}
+</style>
+</head>
+<body><main id="fixture"></main><script>
+(() => {
+  const key='mitch-owned-github-menu-fixture',root=document.getElementById('fixture');let menuOpen=false;
+  const read=()=>{try{return JSON.parse(localStorage.getItem(key))||{menuClicks:0,repositoryClicks:0,repositoryLoads:0};}catch{return {menuClicks:0,repositoryClicks:0,repositoryLoads:0};}};
+  const bump=name=>{const state=read();state[name]++;localStorage.setItem(key,JSON.stringify(state));};
+  const node=(tag,text,attrs={})=>{const result=document.createElement(tag);result.textContent=text;for(const [name,value]of Object.entries(attrs))result.setAttribute(name,value);return result;};
+  const documentMarker=crypto.randomUUID?.()||String(Date.now())+'-'+Math.random().toString(36).slice(2);
+  function render(){
+    root.replaceChildren();
+    if(location.pathname==='/repositories'){
+      root.append(node('h1','Your repositories'),node('p','Owned sample repository list'),node('button','Create repository',{'aria-label':'Create repository'}));return;
+    }
+    const header=node('header',''),profile=node('button','Profile',{'aria-label':'Open user navigation menu','aria-expanded':String(menuOpen)});
+    profile.onclick=()=>{bump('menuClicks');menuOpen=!menuOpen;render();};
+    header.append(node('h1','GitHub fixture'),profile);root.append(header,node('p','This isolated fixture contains no accounts or user data.'));
+    if(menuOpen){
+      const menu=node('nav','',{'aria-label':'User navigation'}),repositories=node('a','Your repositories',{href:'/repositories'});
+      repositories.addEventListener('click',()=>bump('repositoryClicks'));menu.append(repositories);root.append(menu);
+    }
+  }
+  window.resetFixture=()=>{localStorage.setItem(key,JSON.stringify({menuClicks:0,repositoryClicks:0,repositoryLoads:0}));menuOpen=false;render();return true;};
+  Object.defineProperty(window,'fixtureState',{get:()=>({...read(),menuOpen,path:location.pathname,documentMarker})});
+  if(location.pathname==='/repositories')bump('repositoryLoads');render();
+})();
+</script></body></html>

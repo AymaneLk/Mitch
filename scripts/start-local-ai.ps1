@@ -1,4 +1,4 @@
-param([switch]$Stop)
+param([switch]$Stop,[switch]$SpeechOnly)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $runtime = Join-Path $root 'vendor/local-ai'
@@ -24,7 +24,8 @@ if (Test-Path $pidFile) {
   $running = @(Get-Content $pidFile -Raw | ConvertFrom-Json | Where-Object { Get-Process -Id $_.pid -ErrorAction SilentlyContinue })
   if ($running.Count) { throw 'Local services are already tracked. Use this script with -Stop before restarting.' }
 }
-foreach ($port in @(22130,22131,22132)) {
+$ports = if ($SpeechOnly) { @(22131,22132) } else { @(22130,22131,22132) }
+foreach ($port in $ports) {
   $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,$port)
   try { $listener.Start() } finally { $listener.Stop() }
 }
@@ -38,8 +39,10 @@ function Start-ServiceProcess($name,$executable,$arguments) {
   return [pscustomobject]@{name=$name;pid=$process.Id;path=[IO.Path]::GetFullPath($executable);started=$process.StartTime.ToUniversalTime().ToString('o')}
 }
 try {
-  $server = Join-Path $runtime 'llama/llama-server.exe'
-  $entries += Start-ServiceProcess 'chat' $server @('-m','vendor/local-ai/models/Qwen3.5-4B-Q4_K_M.gguf','--mmproj','vendor/local-ai/models/mmproj-F16.gguf','--host','127.0.0.1','--port','22130','--alias','mitch-local','--ctx-size','16384','--parallel','1','--gpu-layers','all','--flash-attn','on','--jinja','--no-webui','--cors-origins','http://127.0.0.1','--no-cors-credentials')
+  if (!$SpeechOnly) {
+    $server = Join-Path $runtime 'llama/llama-server.exe'
+    $entries += Start-ServiceProcess 'chat' $server @('-m','vendor/local-ai/models/Qwen3.5-4B-Q4_K_M.gguf','--mmproj','vendor/local-ai/models/mmproj-F16.gguf','--host','127.0.0.1','--port','22130','--alias','mitch-local','--ctx-size','16384','--parallel','1','--gpu-layers','all','--flash-attn','on','--jinja','--no-webui','--cors-origins','http://127.0.0.1','--no-cors-credentials')
+  }
   $entries += Start-ServiceProcess 'asr' $asrServer @('serve','--host','127.0.0.1','--port','22131','--backend','cpu','--asr-model','vendor/local-ai/nemotron/nemotron-en-q8.gguf','--no-ui','--max-upload-mb','24')
   $python = Join-Path $runtime 'venv/Scripts/python.exe'
   if (Test-Path $python) { $entries += Start-ServiceProcess 'speech' $python @('-m','uvicorn','local_runtime.speech:app','--host','127.0.0.1','--port','22132') }
@@ -48,3 +51,4 @@ try {
 }
 $entries | Format-Table name,pid
 Write-Host 'Services are loading. Logs: vendor/local-ai/logs. Check health before use.'
+if ($SpeechOnly) { Write-Host 'Speech-only mode: CPU recognition and synthesis. Qwen was not started.' }

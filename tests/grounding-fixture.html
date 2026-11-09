@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Mitch measured target fixture</title>
+<style>body{margin:0;background:#f4f0e8;font:20px sans-serif}p{margin:50px}#profile{position:absolute;left:29px;bottom:75px;width:34px;height:34px;border-radius:50%;border:0;padding:0;background:#e600ad}span{position:absolute;left:78px;bottom:82px}</style>
+<p>Isolated click and circle test</p><button id="profile" aria-label="Profile"></button><span>Profile</span>
+<script>window.hits=[];document.addEventListener('click',e=>hits.push({id:e.target.id,x:e.clientX,y:e.clientY}));window.targetRect=()=>{const r=document.getElementById('profile').getBoundingClientRect();return{x:r.x,y:r.y,width:r.width,height:r.height};};</script>
