@@ -272,7 +272,7 @@ async function drawComputerTarget(args,context){
   if(rect.x<d.x||rect.y<d.y||rect.x+rect.width>d.x+d.width||rect.y+rect.height>d.y+d.height)throw new Error('This target crosses display boundaries. Move it fully onto one display and observe again.');
   selectMarksDisplay(display);
   const color=args.color==='auto'?['green','yellow','blue'][colorIndex++%3]:args.color;
-  shapes.push({shape:args.shape,color,x:(rect.x-d.x)/d.width,y:(rect.y-d.y)/d.height,x2:(rect.x+rect.width-d.x)/d.width,y2:(rect.y+rect.height-d.y)/d.height});
+  shapes.push({shape:args.shape,color,x:(rect.x-d.x)/d.width,y:(rect.y-d.y)/d.height,x2:(rect.x+rect.width-d.x)/d.width,y2:(rect.y+rect.height-d.y)/d.height,...(typeof args.label==='string'&&args.label.trim()?{label:args.label.trim().slice(0,90)}:{})});
   if(shapes.length>200)shapes.shift();overlay.setBounds(d);updateOverlay();
   return {status:'drawn',target:target.name,source:'Windows accessibility bounds from the same screenshot',display_id:display.id};
 }
