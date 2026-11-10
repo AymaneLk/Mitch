@@ -1,7 +1,6 @@
 'use strict';
 
 const {randomUUID}=require('node:crypto');
-const {deepseekURL,deepseekHeaders,deepseekPayload,validateDeepseekJSON,deepseekError}=require('./deepseek-ai');
 
 // Never forward the user's cloud key to a local model or follow a redirect.
 function localURL(value, endpoint) {
@@ -55,25 +54,23 @@ function chatPayload(body,settings) {
   return payload;
 }
 
-async function checkedJSON(fetcher,url,options,remote=false) {
+async function checkedJSON(fetcher,url,options) {
   const response=await fetcher(url,{...options,redirect:'error'});
   const data=await response.json().catch(()=>({}));
-  if(!response.ok){if(remote)throw deepseekError(response.status);throw new Error(data.error?.message||data.detail||`Local AI request failed (${response.status}).`);}
+  if(!response.ok)throw new Error(data.error?.message||data.detail||`Local AI request failed (${response.status}).`);
   return data;
 }
 
-async function localResponse(fetcher,settings,body,signal,key='') {
-  const remote=settings.chatProvider==='deepseek';
-  const url=remote?deepseekURL():localURL(settings.localChatUrl||'http://127.0.0.1:22130/v1','chat/completions');
-  const translated=chatPayload(body,settings),payload=remote?deepseekPayload(translated,body,settings):translated;
+async function localResponse(fetcher,settings,body,signal) {
+  const url=localURL(settings.localChatUrl||'http://127.0.0.1:22130/v1','chat/completions');
+  const payload=chatPayload(body,settings);
   const data=await checkedJSON(fetcher,url,{
-    method:'POST',headers:remote?deepseekHeaders(key):{'Content-Type':'application/json'},body:JSON.stringify(payload),signal
-  },remote);
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal
+  });
   const choice=data.choices?.[0];
   if(!choice?.message)throw new Error('The model returned no message.');
   if(choice.finish_reason==='length')throw new Error('The model response was truncated. Try a smaller task.');
   const message=choice.message,output=[],metadata={_localMessageId:randomUUID(),...(typeof message.reasoning_content==='string'?{_localReasoning:message.reasoning_content}:{})};
-  if(remote)validateDeepseekJSON(message.content,body.response_format);
   if(message.content)output.push({type:'message',role:'assistant',content:[{type:'output_text',text:message.content}],...metadata});
   for(const call of message.tool_calls||[]) {
     if(!call.function?.name||typeof call.function.arguments!=='string')throw new Error('The model returned an invalid tool call.');

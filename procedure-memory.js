@@ -23,7 +23,7 @@ const clone=value=>JSON.parse(JSON.stringify(value));
 function boundedClone(value){const encoded=JSON.stringify(value);if(!encoded||encoded.length>MAX_BYTES)throw Error('Procedure data exceeds its bound.');return JSON.parse(encoded);}
 function scopeKey(target){
   if(target?.kind==='native'&&typeof target.app==='string')return {kind:'native',app:normalize(target.app)};
-  if(target?.kind==='browser'&&typeof target.hostname==='string')return {kind:'browser',hostname:target.hostname,...(target.browser?{browser:target.browser}:{}),...(target.title?{title:target.title}:{})};
+  if(target?.kind==='browser'&&typeof target.hostname==='string')return {kind:'browser',hostname:target.hostname,...(target.frame_id?{frame_id:target.frame_id}:{}),...(target.browser?{browser:target.browser}:{}),...(target.title?{title:target.title}:{})};
   return null;
 }
 function bindTargets(program){
@@ -36,7 +36,7 @@ function matchingScope(wanted,scope){
   const expected=scopeKey(wanted),actual=scopeKey(scope?.target);
   if(!expected||!actual||expected.kind!==actual.kind)return false;
   if(expected.kind==='native')return expected.app===actual.app;
-  return expected.hostname===actual.hostname&&(!expected.browser||expected.browser===(actual.browser||scope.observation?.browser))&&(!expected.title||expected.title===(actual.title||scope.observation?.title));
+  return (expected.frame_id||0)===(actual.frame_id||0)&&expected.hostname===actual.hostname&&(!expected.browser||expected.browser===(actual.browser||scope.observation?.browser))&&(!expected.title||expected.title===(actual.title||scope.observation?.title));
 }
 function scopeSignature(target,frame){
     if(!scopeKey(target))return null;
@@ -46,11 +46,11 @@ function scopeSignature(target,frame){
       if(!plain(control)||typeof control.name!=='string'||control.name.length>1000||typeof (control.role||control.type)!=='string'||control.protected||control.is_password||control.password||control.isPassword||/password|secure.?text/i.test(control.role||control.type))return null;
       if(control.value!==undefined&&(typeof control.value!=='string'||control.value.length>12000))return null;
       if(['enabled','editable','checked','selected'].some(key=>control[key]!==undefined&&typeof control[key]!=='boolean')||control.href!==undefined&&(typeof control.href!=='string'||control.href.length>8000))return null;
-      controls.push([control.name,normalize(control.role||control.type),control.enabled!==false,control.editable===true,control.checked??null,control.selected??null,control.value===undefined?null:hash(control.value),control.href===undefined?null:hash(String(control.href))]);
+      controls.push([control.name,normalize(control.role||control.type),control.enabled!==false,control.editable===true,control.checked??null,control.selected??null,control.value===undefined?null:hash(control.value),control.href===undefined?null:hash(String(control.href)),control.ancestors||[]]);
     }
     let page;
     if(target.kind==='browser'){
-      if(target.browser&&frame.browser!==target.browser)return null;
+      if((target.frame_id||0)!==(frame.frame_id||0)||target.browser&&frame.browser!==target.browser)return null;
       try{const url=new URL(frame.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.hostname!==target.hostname)return null;page={browser:frame.browser||target.browser||'',urlHash:hash(url.href)};}catch{return null;}
     }
     return hash(JSON.stringify({scope:scopeKey(target),...(page?{page}:{windowTitle:hash(String(frame.window?.title||''))}),controls}));
@@ -67,6 +67,29 @@ function scopeSignatures(context,program){
   return result.length?result:null;
 }
 const initialSignature=(context,program)=>{const scopes=scopeSignatures(context,program);return scopes?hash(JSON.stringify(scopes)):null;};
+function dependencySignature(context,program,bindings={}){
+  // Matching a known task may ignore unrelated controls; execution STILL
+  // compares a fresh full scope signature before any input in the runner.
+  const scopes=scopeSignatures(context,program);if(!scopes||scopes.length!==1||bindCount(program)!==1)return null;
+  const target=bindTargets(program)[0],scope=context.scopes.find(item=>matchingScope(target,item)),frame=scope.observation;
+  const selectors=[];
+  const visit=value=>{
+    if(!value||typeof value!=='object')return;
+    if(value.target&&!value.target.kind&&typeof value.target==='object')selectors.push(value.target);
+    for(const child of Object.values(value))if(child&&typeof child==='object'){if(Array.isArray(child))child.forEach(visit);else visit(child);}
+  };visit(program);
+  const entries=[];
+  for(const selector of [...new Map(selectors.map(value=>[JSON.stringify(value),value])).values()]){
+    const name=plain(selector.name)&&selector.name.ref?bindings[selector.name.ref]:selector.name;
+    if(typeof name!=='string'||selector.match&&selector.match!=='exact')return null;
+    const matches=matchControls(frame.controls,{...selector,name});if(matches.length>1)return null;
+    entries.push({selector,state:matches.map(control=>({name:selector.name,role:normalizeRole(control.role||control.type),enabled:control.enabled!==false,editable:control.editable===true,checked:control.checked??null,selected:control.selected??null,ancestors:control.ancestors||[],value:control.value===undefined?null:hash(control.value),href:control.href===undefined?null:hash(control.href)}))});
+  }
+  if(!entries.length)return null;
+  // New dialogs alter task context even when existing selectors still match.
+  const dialogs=frame.controls.filter(control=>['dialog','alertdialog'].includes(normalizeRole(control.role||control.type))).map(control=>control.name).sort();
+  return hash(JSON.stringify({target:scopeKey(target),location:frame.source==='browser_dom'?frame.url:frame.window?.title||'',dialogs,entries}));
+}
 function parametersIn(text){
   if(typeof text!=='string'||/[\r\n]/.test(text))return null;
   const expressions=[...text.matchAll(/"([^"\\\r\n]{1,300})"/g)];
@@ -227,7 +250,7 @@ class ProcedureMemory {
     for(let index=this.rows.length-1;index>=0;index--){
       const row=this.rows[index],bindings=matcherBindings(row.matcher,request);if(!bindings)continue;
       const signatures=scopeSignatures(preparedContext,row.program);
-      if(Object.values(bindings).some(unsafeText)||!cacheable(row.program,bindings)||!signatures||signatures.length!==1||bindCount(row.program)!==1||hash(JSON.stringify(signatures))!==row.signature)continue;
+      if(Object.values(bindings).some(unsafeText)||!cacheable(row.program,bindings)||!signatures||signatures.length!==1||bindCount(row.program)!==1||(row.version===2?dependencySignature(preparedContext,row.program,bindings):hash(JSON.stringify(signatures)))!==row.signature)continue;
       // LRU is in-memory; do not force disk encryption onto every hot path.
       this.rows.splice(index,1);this.rows.push(row);
       return {program:clone(row.program),bindings:clone(bindings),scopeSignatures:signatures};
@@ -237,12 +260,13 @@ class ProcedureMemory {
   remember(text,preparedContext,program,{approved=false}={}){
     if(approved!==true||!safeRequest(text)||!cacheable(program))return false;
     let copy;try{copy=boundedClone(validateTaskProgram(program));}catch{return false;}
-    const signature=initialSignature(preparedContext,copy);if(!signature)return false;
+    let signature=initialSignature(preparedContext,copy);if(!signature)return false;
     const request=text.trim(),generalized=parameterize(request,copy,preparedContext);
     const selected=generalized&&cacheable(generalized.program,generalized.bindings)?generalized:{program:copy,matcher:{kind:'exact',hash:hash(request)}};
+    const dependency=dependencySignature(preparedContext,selected.program,selected.bindings||{});const version=dependency?2:1;if(dependency)signature=dependency;
     try{boundedClone(selected);}catch{return false;}
     this.prune();this.rows=this.rows.filter(row=>row.signature!==signature||!same(row.matcher,selected.matcher));
-    this.rows.push({version:1,createdAt:this.now(),signature,matcher:selected.matcher,program:selected.program});
+    this.rows.push({version,createdAt:this.now(),signature,matcher:selected.matcher,program:selected.program});
     if(this.rows.length>MAX_ENTRIES)this.rows.shift();this.changed();return true;
   }
   export(){this.prune();return clone(this.rows);}
@@ -252,7 +276,7 @@ class ProcedureMemory {
     for(const candidate of rows){
       try{
         const row=boundedClone(candidate);
-        if(!plain(row)||Object.keys(row).sort().join(',')!=='createdAt,matcher,program,signature,version'||row.version!==1||!Number.isFinite(row.createdAt)||row.createdAt>now||now-row.createdAt>=TTL||!/^[a-f0-9]{64}$/.test(row.signature)||!matcherValid(row.matcher))continue;
+        if(!plain(row)||Object.keys(row).sort().join(',')!=='createdAt,matcher,program,signature,version'||![1,2].includes(row.version)||!Number.isFinite(row.createdAt)||row.createdAt>now||now-row.createdAt>=TTL||!/^[a-f0-9]{64}$/.test(row.signature)||!matcherValid(row.matcher))continue;
         const bindings=row.matcher.kind==='quoted'?Object.fromEntries(row.matcher.parts.slice(1).map((_part,index)=>[parameterName(index),'memory parameter'])):{};
         row.program=validateTaskProgram(row.program,bindings);
         if(!cacheable(row.program,bindings))continue;

@@ -1,5 +1,58 @@
 # Changelog
 
+## 0.6.0-local.33 — Spotify MCP playback recovery
+
+- Work around Spotify desktop's accepted-but-empty direct-track playback by starting the requested recording at its exact album offset. Confirm playback inside the provider without an extra model review; report that subsequent album tracks may follow.
+- Distinguish rejected, accepted and lost MCP writes. Launch the discovered Spotify app and retry once only after a proven no-device rejection; never replay an accepted or uncertain operation.
+- Expose specific provider errors and add live playback/progress, pause and resume checks. See `docs/SPOTIFY-PLAYBACK-FIX.md` for evidence and limitations.
+
+## 0.6.0-local.28 — General structured computer-use engine
+
+- Compile compact bounded plans and exact prepared-scope references into the existing executor, reducing model context and window-title transcription errors. Permit one correction of a proven pre-input schema refusal.
+- Resolve repeated DOM/UIA controls by observed named ancestors; select relevant controls for large planning views while retaining explicit truncation. Preserve hierarchy in cached-workflow fingerprints and delivered-input receipts.
+- Inspect and act inside open shadow roots and explicitly selected embedded documents, with origin permissions, exact browser document identity, stale-frame refusal, and no model-generated JavaScript. Browser Bridge 1.6.0 uses the existing permissions.
+- Add a persistent, capability-checked Win32 text replacement route only after a specific pre-write UIA pattern refusal. Revalidate unique control, process, window, class, protection and original text; verify exact text readback. No application-name branch.
+- Require approval for recognized consequential controls, preserving automatic ordinary edits. Keep generic unknown outcomes blocked.
+- Add controlled unfamiliar-layout, classic Notepad, cross-application and resource benchmarks. See `docs/GENERAL-ENGINE-RESULTS.md` for measured results, failed exploratory trials and limits.
+
+## 0.6.0-local.27 — Recover interrupted native plans
+
+- Distinguish an ambiguous next target from a lost input acknowledgement. After a clean but unverified native action, refresh the exact window and allow a distinct continuation only when interactive controls demonstrably changed.
+- Reserve every attempted control in interrupted native plans. Block prefix replay, switching input routes, and switching windows during recovery. Keep uncertain delivery explicitly marked; final task completion still needs independent evidence.
+- Preserve recovery evidence through nested workflows. Native and browser read-only recovery can confirm an already-completed request without replaying its inputs.
+- Add a real native regression that reproduces the previous stop with unmodified driver responses, then completes with exactly two clicks and no replay. See `docs/NATIVE-RECOVERY.md`.
+
+## 0.6.0-local.26 — General workflow latency and reliability
+
+- Compile independent whole-request completion predicates concurrently with the planner. Fresh scoped execution evidence can prove eligible tasks locally; unsupported, incomplete or uncertain evidence retains semantic review. This does not authorize inputs.
+- Preserve native checkbox/selection state and distinguish a unique typed control from inert labels without accepting duplicate interactive, disabled or protected controls.
+- Prepare explicitly named source and destination windows together. Reduce redundant planning instructions and field assertions while preserving local verification.
+- Refresh the exact browser tab after a known failed navigation assertion, then review fresh evidence without model-driven rediscovery or repeated input. Preserve browser profile binding through redacted workflow evidence using a noncredential digest.
+- Add real native and public-browser before/after tests with independent readback; Browser Bridge 1.5.0. See `docs/GENERAL-SPEED.md`. Arbitrary tasks are not guaranteed to finish within five seconds.
+
+## 0.6.0-local.25 — Verified public website tasks
+
+- Execute parameterized YouTube search/ranked playback, English Wikipedia articles and GitHub repository search/ranked opening locally through Browser Bridge 1.4.0. Exact recognized requests need no model calls; other wording can use the same bounded tool from the planner.
+- Follow actual ranked YouTube links within its loaded application, avoiding a full document reload for every video. Wait for the relevant results and player instead of unrelated network loading.
+- Verify result order, document/tab identity, loaded repository metadata and actual advancing video playback. Advertisements do not count as the requested video. Cancellation, unknown-outcome guards and general native/visual fallback remain active.
+- Add real public-site before/after tests in disposable Opera profiles, independent DOM/playback readback and phase timing. These adapters do not guarantee 1–5 seconds for arbitrary websites, complex tasks or advertisements. See `docs/REAL-WEB-SPEED.md`.
+
+## 0.6.0-local.24 — Fewer computer-use round trips
+
+- Finish recognized whole-request field edits and navigation from fresh scoped evidence without a second model review. Other tasks retain semantic review.
+- Combine adjacent workflow action phases while preserving intermediate assertions and binding/branch boundaries; check final predicates against one consistent fresh frame.
+- Reuse approved single-scope procedures after unrelated control changes, while rechecking the entire current scope before input and rejecting relevant ambiguity or new dialogs.
+- Keep a mutation-invalidated browser control index, reading values, visibility and target bounds live. A persistent Windows event listener invalidates short-lived native snapshot reuse; unavailable listeners fall back to fresh reads.
+- Add a bounded real-model/native-UI benchmark against the preserved v23 engine, with independent fixture readback and measured model selection. See `docs/SPEED-VALIDATION.md` for results and scope.
+
+## 0.6.0-local.23 — ChatGPT OAuth
+
+- Replace DeepSeek reasoning with official system-browser ChatGPT OAuth, verified identity, protected account storage and automatic refresh.
+- Discover available models per account and stream Responses through the existing validated local tool loop.
+- Add optional persistent Responses WebSocket continuation with safe context replay; preserve CPU voice, workflows and Stop.
+- Remove retired provider keys/UI/runtime, add protocol and Windows settings tests, and provide bounded live transport benchmarks. Live OAuth, both transports, local voice, a native fixture click and screenshot understanding were verified on one account; these checks do not establish arbitrary-task accuracy.
+- Parse valid completed SSE when the live OAuth route omits Content-Type, and persist usage-limit pauses across restarts until the user resumes.
+
 ## 0.6.0-local.22
 
 - Adds optional DeepSeek chat/planning alongside local Qwen; OpenAI API calls are disabled in this edition. CPU Nemotron recognition and Kokoro speech synthesis remain separate local services.

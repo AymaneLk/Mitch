@@ -35,7 +35,7 @@ async function run({dispatch,context={},beginScope=()=>Symbol('folder-test'),end
   }});
   const invoke=dispatch||((name,args,ctx)=>name==='folders_find'?folders.find(args,ctx):folders.open(args,ctx));
   const calls=[];
-  const ai=new AIClass(()=>({chatProvider:'deepseek',chatModel:'test',allowDesktop:true,allowScreen:false,workflowEngine:true,fastWorkflowPlanning:true}),()=>{throw Error('No API key is needed');},async(name,args,ctx)=>{
+  const ai=new AIClass(()=>({chatProvider:'chatgpt',chatModel:'test',allowDesktop:true,allowScreen:false,workflowEngine:true,fastWorkflowPlanning:true}),()=>{throw Error('No API key is needed');},async(name,args,ctx)=>{
     assert.ok(['folders_find','folders_open'].includes(name),'No non-folder desktop tool may execute: '+name);validateTool(name,args);
     const started=performance.now();let output;try{output=await invoke(name,args,{...context,...ctx});return output;}catch(error){output={status:'error',code:error.code,message:error.message};throw error;}finally{calls.push({name,args,output,ms:Math.round((performance.now()-started)*100)/100});}
   },()=>{throw Error('No network request is permitted');});

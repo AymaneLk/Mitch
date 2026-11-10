@@ -1,8 +1,9 @@
 'use strict';
-importScripts('config.js','action-plan.js','tab-operations.js','page-operations.js');
+importScripts('config.js','action-plan.js','public-site-task.js','tab-operations.js','page-operations.js','site-operations.js');
 const configuredPort=globalThis.MITCH_BROWSER_CONFIG?.port;
 const ENDPOINT='ws://127.0.0.1:'+(Number.isInteger(configuredPort)&&configuredPort>=1024&&configuredPort<=65535?configuredPort:22133)+'/mitch-browser';
 const operations=MitchTabOperations.createTabOperations(chrome),pageOperations=MitchPageOperations.createPageOperations(chrome),pending=new Map();
+const siteOperations=MitchSiteOperations.createSiteOperations(chrome,{sites:MitchPublicSites});
 const sessionId=crypto.randomUUID();
 let socket,ready=false,reconnectTimer,heartbeat,backoff=500,clientId,connecting=false;
 let status='Mitch is not connected.',pageAccess=false;
@@ -32,7 +33,7 @@ async function connect(){
     connection.onopen=()=>{
       if(socket!==connection)return;
       status='Connecting to Mitch…';
-      safeSend(connection,{type:'hello',token,clientId,browser:browserName(),sessionId,capabilities:['tabs','pages','page-recovery-v1','page-navigation-v1'],pageAccess});
+      safeSend(connection,{type:'hello',token,clientId,browser:browserName(),sessionId,capabilities:['tabs','pages','page-recovery-v1','page-navigation-v1','public-sites-v1'],pageAccess});
       clearInterval(heartbeat);
       heartbeat=setInterval(()=>safeSend(connection,{type:'ping'}),20000);
     };
@@ -47,8 +48,8 @@ async function connect(){
       if(!ready||message.type!=='command'||typeof message.id!=='string')return;
       if(pending.has(message.id))return; // The original reply remains authoritative.
       if(pending.size>=32){safeSend(connection,{type:'result',id:message.id,result:{status:'refused',code:'busy',verified:false,action_attempted:false,message:'Too many pending browser requests.'}});return;}
-      const job={cancelled:false,connection,page:typeof message.method==='string'&&message.method.startsWith('page.')};pending.set(message.id,job);
-      const handler=typeof message.method==='string'&&message.method.startsWith('page.')?pageOperations:operations;
+      const job={cancelled:false,connection,page:message.method==='site.task'||typeof message.method==='string'&&message.method.startsWith('page.')};pending.set(message.id,job);
+      const handler=message.method==='site.task'?siteOperations:typeof message.method==='string'&&message.method.startsWith('page.')?pageOperations:operations;
       handler.execute(message.method,message.args,{id:message.id,deadline:message.deadline,isCancelled:()=>job.cancelled||socket!==connection||!ready})
         .then(result=>{if(socket===connection&&ready)safeSend(connection,{type:'result',id:message.id,result});})
         .catch(()=>{if(socket===connection&&ready)safeSend(connection,{type:'result',id:message.id,result:{status:'error',code:'internal_error',verified:false,outcome_unknown:true,message:'The browser request ended without a confirmed result.'}});})
@@ -66,7 +67,7 @@ async function connect(){
 }
 chrome.runtime.onMessage.addListener((message,sender,reply)=>{
   if(sender.id!==chrome.runtime.id)return;
-  if(message?.type==='mitch_browser_status'){reply({connected:ready,status,capabilities:['tabs','pages','page-recovery-v1','page-navigation-v1'],pageAccess});return;}
+  if(message?.type==='mitch_browser_status'){reply({connected:ready,status,capabilities:['tabs','pages','page-recovery-v1','page-navigation-v1','public-sites-v1'],pageAccess});return;}
   if(message?.type==='mitch_browser_permissions_changed'){refreshPermissions().then(()=>reply({connected:ready,status,pageAccess}));return true;}
   if(message?.type==='mitch_browser_reconnect'){connect();reply({connected:ready,status});}
 });

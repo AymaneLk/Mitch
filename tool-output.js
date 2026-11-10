@@ -37,7 +37,7 @@ function removeToolImages(input) {
   }
 }
 
-const WINDOW_OBSERVATION_TOOLS=new Set(['computer_find_window','computer_focus_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_execute_plan','computer_observe','computer_input','browser_read_page','browser_execute_plan','browser_follow_link','browser_open_tab','computer_run_workflow']);
+const WINDOW_OBSERVATION_TOOLS=new Set(['computer_find_window','computer_focus_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_execute_plan','computer_observe','computer_input','browser_read_page','browser_execute_plan','browser_follow_link','browser_open_tab','browser_site_task','computer_run_workflow']);
 
 // The native provider replaces accessibility tokens when it reads that window
 // again. Retaining each old control list makes long tasks repeatedly upload and

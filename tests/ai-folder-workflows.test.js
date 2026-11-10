@@ -6,7 +6,7 @@ const targetPath=String.raw`C:\Users\aymane\Desktop\Operator`;
 const found=(rest={})=>({status:'ok',complete:true,snapshot:'folder-snapshot',matches:[{folder_id:'operator-directory',name:'Operator',path:targetPath,open_windows:[]}],...rest});
 const opened=(rest={})=>({status:'opened',verified:true,path:targetPath,foreground_verified:true,...rest});
 function fixture({discovery=found(),result=opened(),settings={}}={}){
-  const calls=[],config={chatProvider:'deepseek',allowDesktop:true,allowScreen:false,workflowEngine:true,speculativePlanning:true,reuseWorkflows:true,...settings};
+  const calls=[],config={chatProvider:'chatgpt',allowDesktop:true,allowScreen:false,workflowEngine:true,speculativePlanning:true,reuseWorkflows:true,...settings};
   const ai=new AI(()=>config,()=>assert.fail('Folder workflow must not read cloud credentials'),async(name,args,context)=>{
     calls.push({name,args,context});validateTool(name,args);
     assert.ok(['folders_find','folders_open'].includes(name),'No app lookup, screenshots, clicks, or Cua tools are allowed');
@@ -52,7 +52,7 @@ test('uncertain folder delivery stops the task without native clicking or replay
 
 test('a thrown uncertain folder operation stops compound model requests before another input',async()=>{
   const calls=[];let requests=0;
-  const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{
     calls.push(name);assert.equal(name,'folders_open','No later native input may run after an uncertain folder open');
     throw Object.assign(Error('Windows folder operation timed out'),{code:'folder_outcome_unknown',action_attempted:true,outcome_unknown:true,refused:false});
   },()=>assert.fail('No network'));
@@ -66,7 +66,7 @@ test('a thrown uncertain folder operation stops compound model requests before a
 });
 test('Stop while folder discovery is pending prevents the open and keeps no completion claim',async()=>{
   let started,finish;const pending=new Promise(resolve=>finish=resolve),entered=new Promise(resolve=>started=resolve),calls=[];
-  const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);assert.equal(name,'folders_find');started();return pending;},()=>assert.fail('No network'));
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);assert.equal(name,'folders_find');started();return pending;},()=>assert.fail('No network'));
   const request=ai.chat('open operator folder');await entered;ai.cancel();finish(found());
   await assert.rejects(request,/stopped/i);assert.deepEqual(calls,['folders_find']);assert.equal(ai.history.length,0);assert.equal(ai.busy,false);
 });
@@ -77,12 +77,12 @@ test('speech preparation skips all generic reads and model drafts for a local fo
 });
 test('ordinary installed-app requests retain their existing verified fast path',async()=>{
   const calls=[],frame={status:'inspected',snapshot:'app-observation',focus_verified:true,window:{pid:10,window_id:20,title:'Calculator'},controls:[{control_id:'1',name:'One',type:'Button',enabled:true}],degraded:false,truncated:false};
-  const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);if(name==='list_apps')return {status:'ok',apps:[{name:'Calculator',app_id:'calc'}]};assert.equal(name,'open_app');return {status:'opened',observation:frame};},()=>assert.fail('No network'));
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);if(name==='list_apps')return {status:'ok',apps:[{name:'Calculator',app_id:'calc'}]};assert.equal(name,'open_app');return {status:'opened',observation:frame};},()=>assert.fail('No network'));
   assert.equal(await ai.chat('Open Calculator.'),'Calculator is open.');assert.deepEqual(calls,['list_apps','open_app']);assert.equal(ai.lastTaskTiming.route,'local');assert.equal(ai.lastTaskTiming.modelRequests,0);
 });
 test('three failed reads stop honestly without claiming repeated clicking occurred',async()=>{
   let requests=0;const calls=[];
-  const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);assert.equal(name,'computer_list_windows');return {status:'error',message:'Window inventory unavailable'};},()=>assert.fail('No network'));
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No key'),async name=>{calls.push(name);assert.equal(name,'computer_list_windows');return {status:'error',message:'Window inventory unavailable'};},()=>assert.fail('No network'));
   ai.request=async()=>({output:[{type:'function_call',call_id:'read-'+(++requests),name:'computer_list_windows',arguments:'{"query":""}'}]});
   const answer=await ai.chat('Inspect the desktop');assert.match(answer,/three unsuccessful desktop operations/);assert.doesNotMatch(answer,/clicking|clicked/i);assert.equal(requests,3);assert.equal(calls.length,3);
 });

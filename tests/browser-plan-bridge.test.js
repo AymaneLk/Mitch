@@ -31,6 +31,10 @@ async function pair(bridge,{capabilities=['pages','page-recovery-v1'],sessionId=
 }
 const current=async(bridge,context={})=>{const tabs=await bridge.list({browser:'opera'},context);return bridge.observePage({snapshot:tabs.snapshot,tab_id:7},context);};
 const planCalls=client=>client.commands.filter(command=>command.method==='page.plan');
+test('a fresh page receipt refreshes the same tab without an extra inventory request',async t=>{
+ const bridge=await setup(t),client=await pair(bridge),page=await current(bridge);const next=await bridge.observePage({snapshot:page.snapshot,tab_id:7});assert.equal(next.source,'browser_dom');assert.notEqual(next.snapshot,page.snapshot);assert.deepEqual(client.commands.map(c=>c.method),['tabs.list','page.observe','page.observe']);assert.equal(client.commands.at(-1).args.expectedTab.url,tab().url);
+ await assert.rejects(bridge.observePage({snapshot:page.snapshot,tab_id:8}),e=>e.code==='invalid_page_target');bridge.pageSnapshots.get(page.snapshot).created-=31000;await assert.rejects(bridge.observePage({snapshot:page.snapshot,tab_id:7}),e=>e.code==='stale_browser_snapshot');assert.equal(client.commands.length,3);
+});
 async function waitFor(predicate){for(let i=0;i<100;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,2));}assert.fail('Expected protocol event did not arrive.');}
 
 test('an old worker cannot read or act on pages before it declares page support',async t=>{
@@ -203,4 +207,20 @@ test('cancellation after issuance sends cancel and blocks another plan in that t
   const pending=bridge.executePagePlan({snapshot:page.snapshot,...plan},{activityScope:scope,signal:controller.signal});await waitFor(()=>planCalls(client).length===1);controller.abort();
   const result=await pending;assert.equal(result.outcome_unknown,true);assert.equal(result.action_attempted,true);await waitFor(()=>client.cancels.length===1);
   const fresh=await current(bridge);await assert.rejects(bridge.executePagePlan({snapshot:fresh.snapshot,...plan},{activityScope:scope}),error=>error.code==='browser_outcome_unknown');assert.equal(planCalls(client).length,1);
+});
+
+test('frame observations retain the outer tab identity, redact private URLs and reject unseen frame IDs',async t=>{
+ const bridge=await setup(t),child={frame_id:3,browser_document_id:'child-browser-doc',url:'https://embedded.example.test/editor?private=secret',title:'Embedded editor'};
+ const client=await pair(bridge,{handler:m=>m.method==='tabs.list'?{status:'ok',tabs:[tab()]}:m.args.expectedFrame?{...frame(),url:child.url,document_id:'child-doc',snapshot:'child-snapshot'}:{...frame(),has_iframes:true,frames:[child]}});
+ const outer=await current(bridge);assert.equal(outer.frames[0].frame_id,3);assert.ok(!JSON.stringify(outer).includes('secret'));
+ await assert.rejects(bridge.observePage({snapshot:outer.snapshot,tab_id:7,frame_id:99}),e=>e.code==='unobserved_frame');
+ const inside=await bridge.observePage({snapshot:outer.snapshot,tab_id:7,frame_id:3});assert.equal(inside.frame_id,3);assert.equal(inside.url,outer.url);assert.equal(inside.frame_url,'https://embedded.example.test/editor');
+ assert.equal(client.commands.at(-1).args.expectedFrame.browser_document_id,'child-browser-doc');
+ await assert.rejects(bridge.followLink({snapshot:inside.snapshot,target:{name:'Continue'},completion:[{target:{name:'Done'},condition:'exists'}]}),e=>e.code==='unsupported_frame_navigation');
+});
+
+test('sensitive page actions cannot dispatch without host confirmation',async t=>{
+ const bridge=await setup(t),client=await pair(bridge),page=await current(bridge);
+ const result=await bridge.executePagePlan({snapshot:page.snapshot,steps:[{op:'click',target:{name:'Delete record'}}],completion:[{target:{name:'Deleted'},condition:'exists'}]});
+ assert.equal(result.code,'confirmation_required');assert.equal(result.action_attempted,false);assert.equal(planCalls(client).length,0);
 });

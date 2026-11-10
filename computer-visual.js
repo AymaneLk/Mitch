@@ -60,7 +60,7 @@ function calculatorHasButtons(state){
 /** Screenshot-grounded foreground input. Coordinates always remain PNG pixels. */
 class ComputerVisual {
   constructor({computer,now=Date.now,compareImages}) {
-    if (!computer?.client || typeof computer.ensureSession!=='function') throw new Error('The visual controller needs the shared computer controller.');
+    if (!computer?.client || typeof computer.call!=='function') throw new Error('The visual controller needs the shared computer controller.');
     this.computer=computer;this.now=now;this.compareImages=compareImages;this.epoch=0;this.current=null;
   }
   clear() { this.epoch++;this.current=null; }
@@ -72,13 +72,14 @@ class ComputerVisual {
   }
   async call(name,args,context,generation,epoch,expectedSnapshot) {
     this.check(context,generation,epoch);
-    await this.computer.ensureSession(generation);
-    this.check(context,generation,epoch);
-    if(expectedSnapshot){
-      if(expectedSnapshot.connectionId!==this.computer.client.connectionId)throw new Error('The native connection changed after the screenshot. Observe again.');
-      if(this.now()-expectedSnapshot.created>TTL)throw new Error('The screenshot expired while preparing input. Observe again.');
-    }
-    const result=await this.computer.client.call(name,args);
+    const result=await this.computer.call(name,args,generation,()=>{
+      this.check(context,generation,epoch);
+      if(expectedSnapshot){
+        if(expectedSnapshot.connectionId!==this.computer.client.connectionId)throw new Error('The native connection changed after the screenshot. Observe again.');
+        if(expectedSnapshot.sessionRevision!==this.computer.sessionRevision)throw new Error('The desktop session changed after the screenshot. Observe again.');
+        if(this.now()-expectedSnapshot.created>TTL)throw new Error('The screenshot expired while preparing input. Observe again.');
+      }
+    });
     this.check(context,generation,epoch);
     return result;
   }
@@ -129,7 +130,7 @@ class ComputerVisual {
       live={bounds:bounds(data.window_bounds),title:String(data.window_title??'')};
     }
     if(target.kind==='desktop'&&data.display&&data.display!=='primary')throw new Error('The desktop screenshot is not the expected primary display.');
-    const state={id:randomUUID(),target:{...target},created:this.now(),generation,epoch,connectionId:this.computer.client.connectionId,width,height,captureId:data.capture_id,live,elements:Array.isArray(data.elements)?data.elements:[],accessibilityPartial:!!(data.degraded||data.truncated||data.elements_complete===false),captureBounds:data.window_bounds,screenWidth:data.screen_width||data.screenshot_original_width||width,screenHeight:data.screen_height||data.screenshot_original_height||height,scale:data.scale_factor??1};
+    const state={id:randomUUID(),target:{...target},created:this.now(),generation,epoch,connectionId:this.computer.client.connectionId,sessionRevision:this.computer.sessionRevision,width,height,captureId:data.capture_id,live,elements:Array.isArray(data.elements)?data.elements:[],accessibilityPartial:!!(data.degraded||data.truncated||data.elements_complete===false),captureBounds:data.window_bounds,screenWidth:data.screen_width||data.screenshot_original_width||width,screenHeight:data.screen_height||data.screenshot_original_height||height,scale:data.scale_factor??1};
     state.targets=target.kind==='window'?visualTargets(state.elements,state.captureBounds):[];
     state.image=`data:${image.mimeType};base64,${image.data}`;
     this.check(context,generation,epoch);
@@ -238,7 +239,11 @@ class ComputerVisual {
         completed++;
       }
     }
-    catch(caught) { this.check(context,state.generation,state.epoch);error=caught; }
+    catch(caught) {
+      this.check(context,state.generation,state.epoch);error=caught;
+      // Refusing a later step does not undo input already sent by this batch.
+      if(completed>0)error.refused=false;
+    }
     this.check(context,state.generation,state.epoch);
     let observation,images,observationError;
     try { const fresh=await this.capture(state.target,context,state.generation,state.epoch,false);images=fresh._images;const {_images,...plain}=fresh;observation=plain;if(['click','double_click','right_click'].includes(args.kind)&&this.compareImages)observation.visual_change=this.compareImages(state.image,images[0].data_url); }

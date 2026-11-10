@@ -1,0 +1,3 @@
+'use strict';
+const {start,waitFor}=require('./real-browser-lab');
+(async()=>{let lab;try{lab=await start();const id=await lab.reset('https://github.com/microsoft/playwright');await waitFor(()=>lab.evaluate(id,'location.hostname==="github.com"&&document.querySelector("h1")&&document.readyState!=="loading"'),20000,'Repository load');console.log(JSON.stringify(await lab.evaluate(id,'({url:location.href,title:document.title,heading:document.querySelector("h1")?.textContent,meta:[...document.querySelectorAll("meta")].filter(e=>(e.name+e.getAttribute("property")).includes("repo")).map(e=>({name:e.name,property:e.getAttribute("property"),content:e.content}))})')));}finally{await lab?.close();}})().catch(e=>{console.error(e.message);process.exitCode=1;});

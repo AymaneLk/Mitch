@@ -1,6 +1,6 @@
 'use strict';
 // A generic tool error is not evidence that Windows received no input.
-const noDeliveryCodes=new Set(['background_unavailable','stale_capture','stale_element','stale_element_token','invalid_target','target_not_found','protected_control','permission_denied']);
+const noDeliveryCodes=new Set(['session_ended','background_unavailable','stale_capture','stale_element','stale_element_token','invalid_target','target_not_found','protected_control','permission_denied']);
 const plain=value=>!!value&&typeof value==='object'&&!Array.isArray(value);
 const message=value=>typeof value==='string'&&value.trim()?value.trim().slice(0,500):undefined;
 function nativeCode(value){

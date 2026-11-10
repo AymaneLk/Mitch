@@ -7,7 +7,7 @@ const selector=(role,name)=>({role,name,match:'exact'});
 const call=(id,name,args)=>({type:'function_call',call_id:id,name,arguments:JSON.stringify(args)});
 const response=output=>({status:'completed',output});
 const message=text=>({type:'message',role:'assistant',content:[{type:'output_text',text}]});
-const settings=()=>({chatProvider:'deepseek',chatModel:'gpt-6-luna',allowDesktop:true,allowScreen:false});
+const settings=()=>({chatProvider:'chatgpt',chatModel:'gpt-6-luna',allowDesktop:true,allowScreen:false});
 const renamePlan={steps:[
   {op:'fill',target:selector('textbox','Search'),text:'Alpha'},
   {op:'click',target:selector('button','Search')},

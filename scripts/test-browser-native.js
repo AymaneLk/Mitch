@@ -117,7 +117,7 @@ async function run(){
         throw Error(`Unexpected non-browser tool: ${name}`);
       }finally{toolRows.push({name,ms:rounded(performance.now()-started)});}
     };
-    const ai=new AI(()=>({chatProvider:'deepseek',deepseekChatModel:'deepseek-flash',allowDesktop:true,allowScreen:false}),async()=>{throw Error('Credentials forbidden in native browser test.');},dispatch,async()=>{throw Error('Model network forbidden in native browser test.');},async()=>{throw Error('Credentials forbidden in native browser test.');});
+    const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),async()=>{throw Error('Credentials forbidden in native browser test.');},dispatch,async()=>{throw Error('Model network forbidden in native browser test.');},async()=>{throw Error('Credentials forbidden in native browser test.');});
     ai.request=async()=>{modelRequests++;throw Error('Model fallback is forbidden in this native browser test.');};
     phase='trials';progress('Measuring five real extension tab-close workflows');
     for(let trial=1;trial<=5;trial++){

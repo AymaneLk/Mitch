@@ -1,0 +1,20 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+module.exports=async({main,mcp,store,dispatch,directory,version,packaged})=>{
+ const evaluate=code=>main.webContents.executeJavaScript(code),dir=path.join(directory,'mcp-packaged');fs.mkdirSync(dir,{recursive:true});
+ store.data.settings.allowDesktop=true;await mcp.setRoots([dir]);await evaluate("go('settings')");
+ const initial=await evaluate('window.companion.mcpStatus()');assert.equal(initial.servers.length,7);assert.equal(initial.priority,true);
+ await evaluate("window.companion.mcpConfigure('github',{token:'synthetic-mcp-token'})");
+ assert.ok(!JSON.stringify(await evaluate('window.companion.mcpStatus()')).includes('synthetic-mcp-token'));
+ await evaluate("window.companion.mcpEnabled('github',false)");
+ await evaluate("window.companion.mcpConfigure('google',{clientId:'synthetic-client',clientSecret:'synthetic-secret',email:'fixture@example.invalid'})");
+ for(let i=0;i<3;i++)await assert.rejects(evaluate("window.companion.mcpCheck('google')"),/authorization is needed/);
+ assert.equal(mcp.clients.has('google'),false,'Checking must not start OAuth or open a browser.');
+ const file=path.join(dir,'ipc-roundtrip.txt'),result=await dispatch('mcp_execute',{steps:[{server:'filesystem',tool:'write_file',arguments:{path:file,content:'packaged MCP works'}},{server:'filesystem',tool:'read_text_file',arguments:{path:file}}]});
+ assert.equal(result.status,'completed',JSON.stringify(result));assert.equal(fs.readFileSync(file,'utf8'),'packaged MCP works');
+ assert.equal(await evaluate("document.querySelectorAll('#mcpConnections .mcp-card').length"),7);
+ await evaluate("document.getElementById('mcpSection').scrollIntoView({block:'start'});document.fonts.ready");
+ await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+ fs.writeFileSync(path.join(dir,'settings.png'),(await main.webContents.capturePage()).toPNG());
+ fs.writeFileSync(path.join(directory,'mcp-packaged-result.json'),JSON.stringify({status:'passed',version,packaged,checks:['seven connection cards','credential IPC redaction','per-server disable','repeated unauthenticated checks never start OAuth','persistent MCP transport in ASAR','validated file round trip through authoritative dispatcher']},null,2));
+};

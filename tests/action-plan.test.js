@@ -4,6 +4,17 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const {validatePlan, executePlan, normalizeRole, matchControls, testCondition} = require('../action-plan');
 
+test('typed targets distinguish inert labels but never two interactive or disabled matches',()=>{
+ const {typedTarget}=require('../action-plan'),label={name:'Name',role:'text'},input={name:'Name',role:'textbox',value:'value',editable:true};
+ assert.equal(typedTarget([label,input],{name:'Name'},'fill').role,'textbox');
+ assert.equal(typedTarget([label,input,{...input,enabled:false}],{name:'Name'},'fill').role,undefined);
+ assert.equal(typedTarget([label,{...input,role:'text'}],{name:'Name'},'fill').role,'text');
+ assert.equal(typedTarget([label,{...label,clickable:true}],{name:'Name'},'click').role,'text');
+ assert.equal(typedTarget([input,{...label,editable:true}],{name:'Name'},'fill').role,undefined);
+ assert.equal(typedTarget([input,{...label,protected:true}],{name:'Name'},'fill').role,undefined);
+ assert.equal(typedTarget([label,input],{name:'Name',role:'text'},'fill').role,'text');
+});
+
 const target = (name, role = 'button') => ({role, name});
 const control = (name, role = 'button', extra = {}) => ({id: name, name, role, enabled: true, protected: false, editable: role === 'textbox', ...extra});
 const frame = controls => ({controls, complete: true});
@@ -325,4 +336,13 @@ test('checked/selected predicates use observed booleans and never infer missing 
   assert.equal(normalizeRole('UIA_ListItemControlType'), 'option');
   assert.equal(testCondition(frame([control('Flag', 'checkbox', {checked: false})]), {target: target('Flag', 'checkbox'), condition: 'checked', value: 'false'}), true);
   assert.equal(testCondition(frame([control('Flag', 'checkbox')]), {target: target('Flag', 'checkbox'), condition: 'checked', value: 'false'}), false);
+});
+
+test('ancestor selectors disambiguate repeated labels and never fall back when a group is missing',async()=>{
+ const controls=['Harbor','Iris'].map(name=>control('Edit','button',{id:name,ancestors:[{name:'Record '+name,role:'group'}]}));
+ const scoped={name:'Edit',role:'button',within:{name:'Record Iris',role:'group'}};
+ assert.equal(matchControls(controls,scoped)[0].id,'Iris');assert.equal(matchControls(controls,{...scoped,within:{name:'Missing'}}).length,0);
+ let actions=0;const out=await executePlan({steps:[{op:'click',target:scoped}],completion:[{target:scoped,condition:'exists'}],adapter:{snapshot:async()=>frame(controls),act:async()=>{actions++;return {input_delivered:true,status:'issued'};}}});
+ assert.equal(actions,1);assert.equal(out.verified,true);assert.equal(out.delivered_steps[0].target.ancestors[0].name,'Record Iris');
+ assert.throws(()=>validatePlan({steps:[{op:'click',target:{...scoped,within:{name:'Iris',within:{name:'Nested'}}}}],completion:[exists('Done')]}));
 });

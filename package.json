@@ -1,7 +1,7 @@
 {
   "name": "mitch-windows-companion",
   "productName": "Mitch",
-  "version": "0.6.0-local.22",
+  "version": "0.6.0-local.33",
   "private": true,
   "description": "Open-source AI desktop assistant for Windows with natural-language and voice computer control.",
   "main": "main.js",
@@ -11,14 +11,18 @@
     "test": "node --test tests/*.test.js",
     "smoke": "electron . --smoke-test",
     "package": "node package.js",
-    "setup:cua": "node scripts/setup-cua.js"
+    "setup:cua": "node scripts/setup-cua.js",
+    "setup:mcp": "node scripts/setup-mcp.js",
+    "test:mcp": "node scripts/test-mcp-live.js"
   },
   "devDependencies": {
     "@electron/packager": "^20.3.0",
     "electron": "^45.2.3"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
     "ajv": "^8.20.0",
+    "jose": "6.2.17",
     "node-ical": "^0.27.4",
     "undici": "7.30.2",
     "ws": "^8.22.2"

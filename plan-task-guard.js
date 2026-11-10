@@ -1,12 +1,14 @@
 'use strict';
-const mutations=new Set(['folders_open','open_app','open_website','search_web','control_media','search_spotify','click_app_control','type_in_app','computer_focus_window','computer_restore_window','computer_action','computer_action_sequence','computer_input','computer_execute_plan','browser_close_tabs','browser_activate_tab','browser_execute_plan','browser_follow_link','browser_open_tab','computer_run_workflow']);
+const {distinctRecovery}=require('./native-plan-recovery');
+const mutations=new Set(['folders_open','open_app','open_website','search_web','control_media','search_spotify','click_app_control','type_in_app','computer_focus_window','computer_restore_window','computer_action','computer_action_sequence','computer_input','computer_execute_plan','browser_close_tabs','browser_activate_tab','browser_execute_plan','browser_follow_link','browser_open_tab','browser_site_task','computer_run_workflow']);
 const nativeInputs=new Set(['computer_action','computer_action_sequence','computer_input','computer_execute_plan','computer_run_workflow','click_app_control','type_in_app']);
 class PlanTaskGuard {
-  constructor(){this.blocked=new Set();this.browserPartials=new Map();this.defaultScope=Symbol('unscoped-plan');}
+  constructor(){this.blocked=new Set();this.browserPartials=new Map();this.nativePartials=new Map();this.defaultScope=Symbol('unscoped-plan');}
   block(scope){this.blocked.add(scope);if(this.blocked.size>128)this.blocked.delete(this.blocked.values().next().value);}
   async run(name,context,execute,args={}){
     const scope=context.activityScope??this.defaultScope;
     if(this.blocked.has(scope)&&mutations.has(name))return {status:'refused',input_suppressed:true,stop_task:true,message:'A previous plan sent input with an unknown result. I stopped further input in this task to avoid repeating it. Please check the app.'};
+    if(this.nativePartials.has(scope)&&mutations.has(name)&&!['computer_execute_plan','computer_run_workflow'].includes(name))return {status:'refused',input_suppressed:true,recovery_required:true,code:'cross_route_replay_blocked',message:'A native plan already attempted input. Continue with computer_execute_plan and the fresh controls; switching input tools could repeat it.',observation:this.nativePartials.get(scope)};
     if(this.browserPartials.has(scope)&&nativeInputs.has(name))return {status:'refused',input_suppressed:true,recovery_required:true,code:'cross_route_replay_blocked',message:'A browser plan already delivered some steps. Continue using its fresh webpage controls; switching input methods could repeat those steps.',observation:this.browserPartials.get(scope)};
     let result;
     try{result=await execute();}catch(error){
@@ -15,8 +17,12 @@ class PlanTaskGuard {
       if(name==='folders_open'&&(error?.outcome_unknown===true||error?.action_attempted===true&&error?.refused!==true))this.block(scope);
       throw error;
     }
-    if(['folders_open','computer_execute_plan','browser_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab'].includes(name)&&result?.outcome_unknown)this.block(scope);
-    if(['browser_execute_plan','browser_follow_link','browser_open_tab'].includes(name)&&result?.recovery_required&&!result.outcome_unknown&&result.delivered_steps?.length&&result.observation?.source==='browser_dom'){this.browserPartials.set(scope,result.observation);if(this.browserPartials.size>128)this.browserPartials.delete(this.browserPartials.keys().next().value);}
+    const nativeRecovery=['computer_execute_plan','computer_run_workflow'].includes(name)&&distinctRecovery(result);
+    if(['folders_open','computer_execute_plan','browser_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab','browser_site_task'].includes(name)&&result?.outcome_unknown&&!nativeRecovery)this.block(scope);
+    if(nativeRecovery||(name==='computer_execute_plan'&&result?.recovery_required&&!result.outcome_unknown&&result.delivered_steps?.length)){
+      this.nativePartials.set(scope,result.observation);if(this.nativePartials.size>128)this.nativePartials.delete(this.nativePartials.keys().next().value);
+    }
+    if(['browser_execute_plan','browser_follow_link','browser_open_tab','browser_site_task'].includes(name)&&result?.recovery_required&&!result.outcome_unknown&&result.delivered_steps?.length&&result.observation?.source==='browser_dom'){this.browserPartials.set(scope,result.observation);if(this.browserPartials.size>128)this.browserPartials.delete(this.browserPartials.keys().next().value);}
     return result;
   }
 }

@@ -29,7 +29,7 @@ test('publisher re-sanitizes timing records instead of trusting arbitrary step f
 });
 
 test('AI timing preserves plan failure cause and counts without tool arguments or response content',async()=>{
-  const ai=new AI(()=>({chatProvider:'deepseek',chatModel:'test',allowDesktop:false,allowScreen:false}),()=>assert.fail('No credentials'),async()=>({status:'interrupted',reason:'page_outcome_unknown',source_reason:'completion_unmet',attempted:1,completed:1,verified:false,outcome_unknown:true,message:'secret response',observation:{url:'https://secret.test'}}),()=>assert.fail('No network'));
+  const ai=new AI(()=>({chatProvider:'chatgpt',chatModel:'test',allowDesktop:false,allowScreen:false}),()=>assert.fail('No credentials'),async()=>({status:'interrupted',reason:'page_outcome_unknown',source_reason:'completion_unmet',attempted:1,completed:1,verified:false,outcome_unknown:true,message:'secret response',observation:{url:'https://secret.test'}}),()=>assert.fail('No network'));
   ai.request=async()=>({status:'completed',output:[{type:'function_call',call_id:'owned',name:'browser_execute_plan',arguments:JSON.stringify({snapshot:'secret snapshot',steps:[{text:'secret user content'}]})}]});
   await ai.chat('A synthetic request');
   const step=ai.lastTaskTiming.steps.find(item=>item.kind==='tool');

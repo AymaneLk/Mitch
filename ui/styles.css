@@ -8,3 +8,6 @@ main>header{position:sticky;top:0;z-index:20;background:#f6f4ef}
 #computerStatus{font-size:12px;color:#526447}
 
 .voice-bar{flex-wrap:wrap}.voice-bar>div{flex:1 1 180px}.voice-bar>label{display:flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap}.voice-bar>label input{width:auto;margin:0}
+/* The component display rules must not override hidden authentication controls. */
+[hidden]{display:none!important}
+.mcp-card{padding:18px 0;border-top:1px solid var(--line,#deded5);margin-top:14px}.mcp-heading{display:flex;justify-content:space-between;gap:16px;align-items:center}.mcp-card details{margin:12px 0}.mcp-card label{display:block;margin:10px 0}.mcp-card input{display:block;width:100%;margin-top:6px}.mcp-card .settings-actions{flex-wrap:wrap}

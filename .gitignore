@@ -18,6 +18,13 @@ browser-extension/config.js
 *.pfx
 library.json
 library.json.tmp
+chatgpt-auth.json
+chatgpt-auth.json.tmp
+mcp-auth.json
+mcp-auth.json.tmp
+mcp-runtime.json
+tokens.json
+client_secret.json
 calendar.ics
 wake-status.json
 .DS_Store

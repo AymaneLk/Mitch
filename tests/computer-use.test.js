@@ -34,6 +34,69 @@ function fixture(options = {}) {
   return { service, client, calls, confirmations, settings, advance: n => { time += n; } };
 }
 const inspect = async f => { if (!f.service.windows.size && !f.service.paused) await f.service.listWindows(); return f.service.inspect({ pid: 42, window_id: 123 }); };
+const endedSession=()=>({isError:true,structuredContent:{status:'refused',refusal:{code:'session_ended',message:'The desktop session has ended.'}}});
+
+test('discovery and inspection always use the same explicit session as input',async()=>{
+  const f=fixture(),before=await inspect(f);
+  await f.service.action({snapshot:before.snapshot,kind:'click',control_id:'0',expected_name:'Save'});
+  for(const call of f.calls)assert.equal(call.args.session,f.service.session,call.name);
+});
+
+test('idle session is renewed before discovery without a lifecycle call per click',async()=>{
+  let starts=0;
+  const f=fixture({call:async name=>name==='start_session'?{structuredContent:{active:true,revived:++starts>1}}:undefined});
+  await inspect(f);await inspect(f);assert.equal(starts,1);
+  const revision=f.service.sessionRevision;
+  f.advance(300001);const state=await inspect(f);
+  assert.equal(starts,2);assert.ok(f.service.sessionRevision>revision);
+  assert.ok(f.service.getSnapshot(state.snapshot,f.service.generation));
+});
+
+test('an unexpectedly ended read recovers once and invalidates old native targets',async()=>{
+  let ended=false,reads=0;
+  const f=fixture({call:async name=>{if(name==='list_windows'&&ended&&++reads===1)return endedSession();}});
+  const old=await inspect(f);ended=true;
+  assert.equal((await f.service.listWindows()).status,'ok');
+  assert.equal(reads,2);assert.equal(f.calls.filter(c=>c.name==='start_session').length,2);
+  await assert.rejects(f.service.action({snapshot:old.snapshot,kind:'click',control_id:'0',expected_name:'Save'}),/expired or was replaced/);
+  assert.equal(f.calls.filter(c=>c.name==='click').length,0);
+});
+
+test('an ended read that still fails after recovery stops at two read attempts',async()=>{
+  const f=fixture({call:async name=>name==='list_windows'?endedSession():undefined});
+  await assert.rejects(f.service.listWindows(),e=>e.code==='session_ended'&&e.refused===true);
+  assert.equal(f.calls.filter(c=>c.name==='list_windows').length,2);
+  assert.equal(f.calls.filter(c=>c.name==='start_session').length,2);
+});
+
+test('an ended input is never replayed, while the next fresh read can recover',async()=>{
+  const f=fixture({call:async name=>name==='click'?endedSession():undefined}),before=await inspect(f);
+  await assert.rejects(f.service.action({snapshot:before.snapshot,kind:'click',control_id:'0',expected_name:'Save'}),e=>e.code==='session_ended'&&e.refused===true);
+  await inspect(f);
+  assert.equal(f.calls.filter(c=>c.name==='click').length,1);
+  assert.equal(f.calls.filter(c=>c.name==='start_session').length,2);
+});
+
+test('session renewal before input rejects the earlier token without dispatch',async()=>{
+  let revived=false;
+  const f=fixture({call:async name=>name==='start_session'?{structuredContent:{active:true,revived}}:undefined}),before=await inspect(f);
+  f.advance(30001);revived=true;
+  await assert.rejects(f.service.action({snapshot:before.snapshot,kind:'click',control_id:'0',expected_name:'Save'}),e=>e.refused===true&&/expired/.test(e.message));
+  assert.equal(f.calls.filter(c=>c.name==='click').length,0);
+});
+
+test('Stop during an ended read prevents automatic session revival',async()=>{
+  let stop=false;
+  const f=fixture({call:async name=>{if(name==='list_windows'&&stop){await f.service.stop();return endedSession();}}});
+  await inspect(f);stop=true;
+  await assert.rejects(f.service.listWindows(),/stopped/);
+  assert.equal(f.calls.filter(c=>c.name==='start_session').length,1);
+});
+
+test('preparation exposes actual checkbox state without inventing absent states',async()=>{
+ const f=fixture({call:async n=>n==='get_window_state'?{structuredContent:{elements:[{label:'Flag',role:'CheckBox',selected:false},{label:'Unknown',role:'CheckBox'},{label:'Tab',role:'Tab',selected:true}]}}:undefined});
+ const o=await inspect(f);assert.equal(o.controls[0].checked,false);assert.equal(o.controls[1].checked,undefined);assert.equal(o.controls[2].checked,undefined);assert.equal(o.controls[2].selected,true);
+});
 
 test('generic provider failures after dispatch preserve uncertain delivery for the agent guard',async()=>{
   const f=fixture({call:async name=>name==='click'?{isError:true,structuredContent:{code:'tool_invocation_failed',effect:'refused'}}:undefined}),before=await inspect(f);
@@ -236,4 +299,19 @@ test('fresh observation failure preserves actual provider verification without i
   assert.equal(result.verified, true);
   assert.equal(result.observation, undefined);
   assert.match(result.message, /Window closed/);
+});
+
+test('only the exact pre-write unsupported-pattern diagnostic permits the bounded native API route',async()=>{
+ const diagnostic='set_value: element [1] does not implement ValuePattern or RangeValuePattern. For controls with TogglePattern (CheckBox) or SelectionItemPattern (RadioButton / ComboBoxItem), use the '+String.fromCharCode(96)+'click'+String.fromCharCode(96)+' tool instead.';
+ for(const message of [diagnostic,'set_value failed after delivery',diagnostic+' extra unknown detail']){
+  const f=fixture({call:async name=>name==='set_value'?{isError:true,structuredContent:{code:'tool_invocation_failed'},content:[{type:'text',text:message}]}:undefined});let fallbacks=0;
+  f.service.nativeText={replace:async args=>{fallbacks++;assert.equal(args.pid,42);assert.equal(args.window_id,123);assert.equal(args.before,'Old text');assert.equal(args.name,'Document');assert.equal(args.text,'Replacement');return {effect:'confirmed',verified:true,route:'system_api'};},stop:()=>{}};
+  const before=await inspect(f),action=()=>f.service.action({snapshot:before.snapshot,kind:'type',control_id:'1',expected_name:'Document',text:'Replacement'});
+  if(message===diagnostic){assert.equal((await action()).verification,'native_api');assert.equal(fallbacks,1);}else{await assert.rejects(action(),e=>e.code==='tool_invocation_failed'&&!e.refused);assert.equal(fallbacks,0);}
+ }
+});
+
+test('native parent indices preserve the named container of repeated controls',async()=>{
+ const f=fixture({call:async n=>n==='get_window_state'?{structuredContent:{elements:[{element_index:12,label:'Record Iris',role:'Group'},{element_index:19,parent_index:12,label:'Edit',role:'Button'},{element_index:33,label:'Record Harbor',role:'Group'},{element_index:40,parent_index:33,label:'Edit',role:'Button'}]}}:undefined});
+ const view=await inspect(f),matches=require('../action-plan').matchControls(view.controls,{name:'Edit',within:{name:'Record Iris',role:'group'}});assert.equal(matches.length,1);assert.equal(matches[0].control_id,'1');assert.equal(view.controls[3].ancestors[0].name,'Record Harbor');
 });

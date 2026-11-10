@@ -62,6 +62,11 @@ test('native normalization preserves roles, explicit states and protected value 
   assert.equal(observed.revision.includes('Alice'), false);
 });
 
+test('driver selected state represents checked only on checkboxes',async()=>{
+ const {adapter}=await setup([element('Flag','CheckBox',{selected:true}),element('Other','CheckBox',{selected:false}),element('Page','Tab',{selected:true}),element('Unknown','CheckBox')]);
+ const {controls}=await adapter.snapshot();assert.equal(controls[0].checked,true);assert.equal(controls[1].checked,false);assert.equal(controls[2].checked,undefined);assert.equal(controls[3].checked,undefined);
+});
+
 test('a current initial snapshot and post-action snapshot avoid duplicate provider reads', async () => {
   const {computer, adapter} = await setup([element('Name', 'Edit', {value: 'old'})]);
   const result = await executePlan({adapter, steps: [{op: 'fill', target: selector('Name', 'textbox'), text: 'new'}], completion: [{target: selector('Name', 'textbox'), condition: 'value', value: 'new'}]});
@@ -70,6 +75,17 @@ test('a current initial snapshot and post-action snapshot avoid duplicate provid
   assert.equal(computer.inputs.length, 1);
   assert.equal(computer.inputs[0].kind, 'type');
   assert.equal(computer.inputs[0].text, 'new');
+});
+
+test('native state events invalidate reuse even within the one-second cache window',async()=>{
+  const {NativeStateSignals}=require('../native-state-signals');
+  const {computer,adapter}=await setup([element('Name','Edit',{value:'old'})]);
+  computer.signals=new NativeStateSignals();computer.signals.accept({ready:true});
+  computer.getSnapshot(adapter.cachedId,0).stateStamp=computer.signals.stamp(target);
+  await adapter.snapshot();assert.equal(computer.reads,1);
+  computer.elements[0].value='external change';computer.signals.accept({kind:'changed',window:target.window_id});
+  const fresh=await adapter.snapshot();assert.equal(computer.reads,2);assert.equal(fresh.controls[0].value,'external change');
+  computer.signals.stop();await adapter.snapshot();assert.equal(computer.reads,3);
 });
 
 test('only explicit confirmed native acknowledgements enter the delivered-step ledger', async () => {

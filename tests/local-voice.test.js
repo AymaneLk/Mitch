@@ -29,28 +29,26 @@ test('ending during microphone acquisition stops late tracks and releases the le
   assert.equal(r.voice.state,'idle');assert.equal(r.counts().releases,1);
 });
 
-test('voice shows live words and working acknowledgement, then ignores late progress after Stop',async()=>{
+test('voice keeps live words while working without adding an acknowledgement, then ignores late progress after Stop',async()=>{
   const r=renderer();await r.voice.start();r.voice.inputId=4;
   r.voice.progress({generation:7,inputId:4,type:'transcript',text:'Open Calcu'});
   r.voice.progress({generation:7,inputId:4,type:'transcript',text:'Open Calculator.',final:true});
-  r.voice.progress({generation:7,inputId:4,type:'working',text:"Got it. I'm on it."});
+  r.voice.progress({generation:7,inputId:4,type:'working'});
   assert.equal(r.captions[0][0],'Open Calcu');assert.equal(r.captions[1][2].replace,true);
-  assert.equal(r.states.at(-1)[2],'working');assert.equal(r.captions.at(-1)[1],'Mitch');
+  assert.equal(r.states.at(-1)[2],'working');assert.equal(r.captions.at(-1)[1],'You');assert.equal(r.captions.length,2);
   await r.voice.stop();const count=r.captions.length;
   r.voice.progress({generation:7,inputId:4,type:'transcript',text:'Late'});assert.equal(r.captions.length,count);
 });
 
-test('acknowledgement playback finishes before the answer and microphone resumes',async()=>{
-  const r=renderer();await r.voice.start();let finishAck;const played=[];
-  r.voice.playAudio=bytes=>{played.push(bytes[0]);return bytes[0]===1?new Promise(resolve=>finishAck=resolve):Promise.resolve();};
+test('the natural answer plays immediately and microphone resumes without acknowledgement playback',async()=>{
+  const r=renderer();await r.voice.start();const played=[];
+  r.voice.playAudio=async bytes=>{played.push(bytes[0]);};
   r.step(100,0.1);r.step(2000,0);await new Promise(resolve=>setImmediate(resolve));
   r.voice.progress({generation:7,inputId:null,type:'transcript',text:'Hello',final:true});
-  r.voice.progress({generation:7,inputId:null,type:'working',text:"Got it. I'm on it."});
+  r.voice.progress({generation:7,inputId:null,type:'working'});
   r.voice.progress({generation:7,inputId:null,type:'acknowledgement',audio:[1]});
   r.resolve({transcript:'Hello',answer:'Hi',audio:[2]});await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(played,[1]);assert.equal(r.track.enabled,false);
-  finishAck();await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(played,[1,2]);assert.equal(r.track.enabled,true);assert.equal(r.voice.phase,'listening');
+  assert.deepEqual(played,[2]);assert.equal(r.track.enabled,true);assert.equal(r.voice.phase,'listening');
   assert.equal(r.captions.filter(c=>c[1]==='You').length,1);await r.voice.stop();
 });
 

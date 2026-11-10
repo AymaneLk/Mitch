@@ -1,6 +1,6 @@
 'use strict';
 const {controlState}=require('./desktop-state');
-const inputs=new Set(['folders_open','open_app','open_website','search_web','search_spotify','control_media','click_app_control','type_in_app','computer_restore_window','computer_action','computer_action_sequence','computer_input','browser_close_tabs','browser_activate_tab','browser_execute_plan','computer_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab']);
+const inputs=new Set(['folders_open','open_app','open_website','search_web','search_spotify','control_media','click_app_control','type_in_app','computer_restore_window','computer_action','computer_action_sequence','computer_input','browser_close_tabs','browser_activate_tab','browser_execute_plan','computer_execute_plan','computer_run_workflow','browser_follow_link','browser_open_tab','browser_site_task']);
 const reads=new Set(['folders_find','inspect_app','look_at_screen','computer_find_window','computer_focus_window','computer_inspect_window','computer_observe','computer_list_windows','list_apps','browser_list_tabs','browser_read_page']);
 const failed=new Set(['error','refused','interrupted','observation_failed']);
 class DesktopProgress {

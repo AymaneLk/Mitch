@@ -35,7 +35,7 @@ test('window discovery retains titled off-screen windows as well as visible and 
   assert.deepEqual(list.windows.map(row=>({pid:row.pid,minimized:row.minimized,on_screen:row.on_screen})),[
     {pid:42,minimized:true,on_screen:false},{pid:43,minimized:false,on_screen:true},{pid:44,minimized:false,on_screen:false},
   ]);
-  assert.deepEqual(f.calls.find(call=>call.name==='list_windows').args,{on_screen_only:false});
+  assert.deepEqual(f.calls.find(call=>call.name==='list_windows').args,{on_screen_only:false,session:f.service.session});
   assert.equal(f.service.windows.has('44:125'),true);
 });
 

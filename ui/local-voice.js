@@ -30,10 +30,7 @@ class LocalVoice {
       this.caption(event.text,'You',{replace:true,newTurn:!this.hasInputCaption});this.hasInputCaption=true;
       if(event.final)this.heardFinal=true;
     }else if(event.type==='working'){
-      this.change('active','Working…','working');this.caption(event.text,'Mitch',{replace:true});
-    }else if(event.type==='acknowledgement'){
-      const generation=this.generation;
-      this.ackPlayback=this.playAudio(event.audio,generation).catch(error=>{if(generation===this.generation)this.onError(error.message);});
+      this.change('active','Working…','working');
     }
   }
   async start({wakeId}={}){
@@ -99,7 +96,6 @@ class LocalVoice {
       if(generation!==this.generation)return;
       await this.inputQueue;if(generation!==this.generation)return;
       const result=await window.companion.localVoiceTurn(bytes,this.session,this.inputId,this.streamFailed);if(generation!==this.generation)return;
-      await this.ackPlayback;if(generation!==this.generation)return;
       if(result.transcript&&!this.heardFinal)this.caption(result.transcript,'You',{replace:true});if(result.answer)this.caption(result.answer,'Mitch',{replace:true});
       if(result.audio.length){
         this.change('active','Speaking…','speaking');await this.playAudio(result.audio,generation);

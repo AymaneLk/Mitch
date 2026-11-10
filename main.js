@@ -1,5 +1,6 @@
 const {app,BrowserWindow,ipcMain,screen,desktopCapturer,safeStorage,shell,dialog,globalShortcut,Tray,Menu,nativeImage,Notification,clipboard,session}=require('electron');
 const {FolderAccess}=require('./folder-access');
+const {approveActions}=require('./action-approval');
 const fs=require('node:fs');
 const path=require('node:path');
 const {pathToFileURL}=require('node:url');
@@ -7,13 +8,20 @@ const {spawn}=require('node:child_process');
 const {tools,Store,SnapshotCache,createDispatcher,webURL,isoDate}=require('./core');
 const {AI}=require('./ai');
 const {localURL}=require('./local-ai');
-const {DEFAULT_MODEL,deepseekHeaders,deepseekModel,checkDeepSeek}=require('./deepseek-ai');
+const {ChatGPTAuth}=require('./chatgpt-auth');
+const {ChatGPTResponses}=require('./chatgpt-responses');
+const {protectedStorage}=require('./chatgpt-storage');
+const {McpHub}=require('./mcp-hub');
+const {byId:mcpProvider}=require('./mcp-catalog');
+let mcp;
+let chatgptAuth,chatgptProvider;
 const {LocalConversation}=require('./local-conversation');
 const {launchAndInspect}=require('./app-launch');
 let localConversation;
 const {openSpotifySearch,normalizeSpotifyWebURL}=require('./spotify');
 const {CuaClient}=require('./cua-client');
 const {ComputerUse}=require('./computer-use');
+const {NativeStateSignals}=require('./native-state-signals');
 const {ComputerVisual}=require('./computer-visual');
 const {namedTarget,matchingNamedTarget}=require('./visual-targets');
 const {compareImages}=require('./visual-change');
@@ -21,8 +29,7 @@ const {refineBox,refineTarget}=require('./visual-grounding');
 const {DesktopRecovery}=require('./desktop-recovery');
 const {BrowserBridge}=require('./browser-bridge');
 const {prepareBrowserExtension}=require('./browser-install');
-const {executePlan}=require('./action-plan');
-const {NativePlanAdapter}=require('./native-plan-adapter');
+const {NativePlanRecovery}=require('./native-plan-recovery');
 const {PlanTaskGuard}=require('./plan-task-guard');
 const {taskTimingSummary}=require('./task-timing');
 const {prepareTaskContext}=require('./task-program-host');
@@ -35,20 +42,25 @@ const {PetPresentation}=require('./pet-presentation');
 const petPresentation=new PetPresentation();
 const root=__dirname;
 const smoke=process.argv.includes('--smoke-test');
-if(smoke&&(process.argv.includes('--target-marks-test')||process.argv.includes('--window-recovery-test')||process.argv.includes('--rocket-native-test')||process.argv.includes('--general-plan-native-test')||process.argv.includes('--hybrid-workflow-test')||process.argv.includes('--task-program-native-test')))app.commandLine.appendSwitch('force-renderer-accessibility');
+if(smoke)app.commandLine.appendSwitch('force-renderer-accessibility');
 app.setName('Mitch');
 // Only trusted bundled pages are loaded; spoken wake must play its ready cue
 // without a mouse gesture, including while the main window is hidden.
 app.commandLine.appendSwitch('autoplay-policy','no-user-gesture-required');
 // Retain the existing profile identity so renaming keeps saved keys and notes.
 app.setPath('userData',path.join(app.getPath('appData'),'Pixie Windows Companion'));
-if(smoke) app.setPath('userData',path.join(process.cwd(),'test-output',process.argv.includes('--provider-settings-test')?'deepseek-provider-profile':'profile'));
+if(smoke) app.setPath('userData',path.join(process.cwd(),'test-output',process.argv.includes('--provider-settings-test')?'chatgpt-provider-profile':'profile'));
 app.setAppUserModelId('local.independent.pixie.windows');
-let main,pet,overlay,tray,store,ai,dispatch,quitting=false,inkMode=false,apiKey='',deepseekKey='',appsCache=[],lastAppsAt=0,voiceActive=false,voiceGeneration=0;
+let main,pet,overlay,tray,store,ai,dispatch,quitting=false,inkMode=false,apiKey='',appsCache=[],lastAppsAt=0,voiceActive=false,voiceGeneration=0;
 let computer,visual,cua,activityOverlay,desktopActivity,voiceActivityScope,administrator=false,voiceController=new AbortController();
 let wake;
 let appsLoading;
 let browserBridge,browserExtension,browserBridgeError='',folders;
+async function confirmConsequentialAction({labels},context={}){
+  context.signal?.throwIfAborted();context.assertActive?.();
+  const result=await dialog.showMessageBox(main,{type:'question',title:'Approve sensitive action',message:'Allow Mitch to perform this action?',detail:labels.join('\n'),buttons:['Cancel','Approve'],defaultId:0,cancelId:0,noLink:true});
+  context.signal?.throwIfAborted();context.assertActive?.();return result.response===1;
+}
 async function startBrowserBridge(){
   if(smoke)return;
   try{
@@ -56,7 +68,7 @@ async function startBrowserBridge(){
     if(store.data.encryptedBrowserBridgeKey)token=(await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedBrowserBridgeKey,'base64'))).result;
     else{token=randomBytes(32).toString('base64url');store.data.encryptedBrowserBridgeKey=(await safeStorage.encryptStringAsync(token)).toString('base64');store.save();}
     browserExtension=prepareBrowserExtension({source:path.join(root,'browser-extension'),destination:path.join(app.getPath('userData'),'browser-extension'),token});
-    browserBridge=new BrowserBridge({token,extensionId:browserExtension.extensionId,onStatus:status=>{if(!smoke)try{fs.writeFileSync(path.join(app.getPath('userData'),'browser-status.json'),JSON.stringify({...status,at:new Date().toISOString()}));}catch{}}});
+    browserBridge=new BrowserBridge({token,confirm:confirmConsequentialAction,extensionId:browserExtension.extensionId,onStatus:status=>{if(!smoke)try{fs.writeFileSync(path.join(app.getPath('userData'),'browser-status.json'),JSON.stringify({...status,at:new Date().toISOString()}));}catch{}}});
     await browserBridge.start();
   }catch(error){browserBridgeError=error.message;}
 }
@@ -95,6 +107,11 @@ async function prepareVoiceDesktop(text,options){
   await Promise.allSettled([apps(''),computer.listWindows({query:''})]);signal.throwIfAborted();
 }
 async function configureTaskPlanning(){
+  ai.warmDesktop=async()=>{
+    if(!store.data.settings.allowDesktop||computer?.paused)return;
+    // Only establish the local driver transport. No UI input or model request.
+    await cua.connect();
+  };
   ai.prepareContext=async(text,options={})=>{
     requireDesktop();options.signal?.throwIfAborted();
     const ownedScope=options.activityScope==null,activityScope=options.activityScope??desktopActivity.beginScope();
@@ -204,6 +221,7 @@ async function stopTasks() {
   localConversation?.stop();
   updateVoiceDisplay({type:'status',state:'idle'});
   ai?.cancel();dispatch?.cancel();voiceController.abort();voiceController=new AbortController();voiceGeneration++;voiceActive=false;voiceCalls.clear();
+  mcp?.close().catch(()=>{});
   desktopActivity?.stop();voiceActivityScope=null;
   visual?.clear();ai?.closeVoice();voiceContinuations.clear();voiceClaimedCalls.clear();
   for(const child of windowsChildren)child.kill();
@@ -217,6 +235,7 @@ async function performControl(kind,args,context) {
   const control=snapshot.controls.find(c=>c.id===args.control_id);
   if(!control||control.password) throw new Error('This control is unavailable or protected. Inspect again.');
   if(kind==='click'&&control.name!==args.expected_name) throw new Error('The requested label does not match the inspected control.');
+  if(!await approveActions([{kind,control}],confirmConsequentialAction,context))return {status:'refused',stop_task:true,verified:false,action_attempted:false,code:'confirmation_required'};
   context.assertActive();requireDesktop();
   appSnapshot.get(args.snapshot);
   try{return await ps({action:kind,pid:snapshot.window.pid,handle:snapshot.window.handle,control_id:control.id,expected_name:args.expected_name,text:args.text});}
@@ -297,6 +316,9 @@ async function readCalendar({from,to}) {
 function makeDispatcher() {
   folders=new FolderAccess({helper:folderHelper});
   const handlers={
+    mcp_discover:async(a,context)=>{requireDesktop();return mcp.discover(a,context);},
+    mcp_execute:async(a,context)=>{requireDesktop();return mcp.execute(a,context);},
+    mcp_use_ui:async(a,context)=>{requireDesktop();context.assertActive();const discovery=a.discover?await context.dispatchChild(a.discover,a.discover==='browser_list_tabs'?{}:{query:a.query||''}):undefined;return {status:'fallback_allowed',reason:a.reason,...(discovery?{discovery}:{}),message:'Use UI tools only for the unsupported remainder. Keep using connected MCPs for their supported capabilities. Never repeat a completed or uncertain operation.'};},
     folders_find:async(a,context)=>{requireDesktop();return folders.find(a,context);},
     folders_open:async(a,context)=>{requireDesktop();return folders.open(a,context);},
     list_apps:async a=>({status:'ok',apps:await apps(a.query)}),
@@ -310,6 +332,7 @@ function makeDispatcher() {
     browser_execute_plan:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.executePagePlan(a,context);},
     browser_follow_link:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.followLink(a,context);},
     browser_open_tab:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.openTab(a,context);},
+    browser_site_task:async(a,context)=>{requireDesktop();if(!browserBridge)throw Error('The browser connection is unavailable.');return browserBridge.runSiteTask(a,context);},
     computer_run_workflow:async(a,context)=>{requireDesktop();if(!store.data.settings.workflowEngine)throw Error('Workflow execution is disabled.');return runGuardedTaskProgram({program:a,bindings:context.workflowBindings||{},dispatch:context.dispatchChild,context,replay:context.workflowReplay});},
     inspect_app:async a=>{requireDesktop();const result=await ps({action:'inspect',query:a.query});if(result.status==='inspected'){const snapshot=appSnapshot.set(result);return {...result,snapshot:snapshot.id};}return result;},
     click_app_control:async (a,context)=>{requireDesktop();return performControl('click',a,context);},
@@ -326,12 +349,13 @@ function makeDispatcher() {
         if(target){const {target_box,target_label,...rest}=a;a={...rest,target_id:target.target_id,expected_name:target.name};}
         else{if(a.target_box===undefined&&store.data.settings.localGrounding!==true)throw Error('Experimental label-only targeting is off. Use a measured target or provide target_box and target_label from the current screenshot. No input was sent.');const box=await refineTarget({nativeImage,image:state.image,box:a.target_box,label:a.target_label,propose:(image,label,signal)=>ai.proposeTarget(image,label,signal),locate:(image,label,signal)=>ai.locate(image,label,signal),signal:context.signal});context.assertActive();a={...a,target_box:box};}
       }
+      if(!await approveActions([{...a,target_label:a.target_label||a.expected_name}],confirmConsequentialAction,context))return {status:'refused',stop_task:true,verified:false,action_attempted:false,code:'confirmation_required'};
       return visual.input(a,context);
     },
     computer_inspect_window:async a=>{requireDesktop();return computer.inspect(a);},
     computer_action:async (a,context)=>{requireDesktop();return computer.action(a,context);},
     computer_action_sequence:async (a,context)=>{requireDesktop();return computer.sequence(a,context);},
-    computer_execute_plan:async(a,context)=>{requireDesktop();const initial=computer.getSnapshot(a.snapshot,computer.generation);return executePlan({steps:a.steps,completion:a.completion,adapter:new NativePlanAdapter({computer,target:initial.window,context,initialSnapshot:initial}),context});},
+    computer_execute_plan:async(a,context)=>{requireDesktop();return nativePlans.run(a,context);},
     control_media:async a=>{requireDesktop();return ps({action:'media',key:a.action});},
     search_spotify:async a=>{requireDesktop();return openSpotifySearch(a.query,uri=>shell.openExternal(uri));},
     create_note:a=>{const item=store.add('notes',{title:a.title,text:a.text});stateChanged();return {status:'saved',id:item.id,title:item.title};},
@@ -351,18 +375,20 @@ function makeDispatcher() {
   const desktopTools=['list_apps','open_app','open_website','search_web','inspect_app','click_app_control','type_in_app','computer_list_windows','computer_find_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','computer_observe','computer_input','control_media','search_spotify','look_at_screen'];
   const visualInvalidators=new Set(['open_app','open_website','search_web','inspect_app','click_app_control','type_in_app','computer_find_window','computer_restore_window','computer_inspect_window','computer_action','computer_action_sequence','control_media','search_spotify','look_at_screen']);
   desktopTools.push('folders_find','folders_open');visualInvalidators.add('folders_open');
+  desktopTools.push('mcp_discover','mcp_execute','mcp_use_ui');visualInvalidators.add('mcp_execute');
   desktopTools.push('computer_focus_window');visualInvalidators.add('computer_focus_window');
   desktopTools.push('browser_list_tabs','browser_close_tabs','browser_activate_tab');
   desktopTools.push('browser_read_page','browser_execute_plan','computer_execute_plan');
-  desktopTools.push('browser_follow_link','browser_open_tab','computer_run_workflow');
-  visualInvalidators.add('browser_follow_link');visualInvalidators.add('browser_open_tab');visualInvalidators.add('computer_run_workflow');
+  desktopTools.push('browser_follow_link','browser_open_tab','browser_site_task','computer_run_workflow');
+  visualInvalidators.add('browser_follow_link');visualInvalidators.add('browser_open_tab');visualInvalidators.add('browser_site_task');visualInvalidators.add('computer_run_workflow');
   visualInvalidators.add('browser_execute_plan');visualInvalidators.add('computer_execute_plan');
   visualInvalidators.add('browser_close_tabs');visualInvalidators.add('browser_activate_tab');
   const recovery=new DesktopRecovery({computer,visual,legacySnapshot:id=>appSnapshot.value?.id===id?appSnapshot.value:null,scopeActive:scope=>desktopActivity.scopes.has(scope)});
   const planGuard=new PlanTaskGuard();
+  const nativePlans=new NativePlanRecovery(computer);
   for(const name of desktopTools){
     const handler=handlers[name];
-    handlers[name]=(args,context)=>desktopActivity.run(context.activityScope,async()=>{context.assertActive();const execute=()=>{if(visualInvalidators.has(name))visual?.clear();if(['browser_close_tabs','browser_activate_tab','browser_execute_plan','browser_follow_link','browser_open_tab'].includes(name)){computer.snapshots.clear();appSnapshot.value=null;}return handler(args,context);};return planGuard.run(name,context,()=>context.fromModel?recovery.run(name,args,context,execute):execute());});
+    handlers[name]=(args,context)=>desktopActivity.run(context.activityScope,async()=>{context.assertActive();const execute=()=>{if(visualInvalidators.has(name))visual?.clear();if(['browser_close_tabs','browser_activate_tab','browser_execute_plan','browser_follow_link','browser_open_tab','browser_site_task'].includes(name)){computer.snapshots.clear();appSnapshot.value=null;}return handler(args,context);};return planGuard.run(name,context,()=>context.fromModel?recovery.run(name,args,context,execute):execute());});
   }
   dispatch=createDispatcher(handlers,name=>send('activity',{name,label:name==='set_pixie_size'?'resize Mitch':name.replaceAll('_',' ')}));
 }
@@ -374,6 +400,13 @@ function handle(name,fn,pages=['index.html']) {
   });
 }
 function registerIPC() {
+  handle('mcpStatus',()=>mcp.status());
+  handle('mcpConfigure',async(id,values)=>{if(ai.busy)throw Error('Finish the current task before changing connections.');return mcp.configure(id,values);});
+  handle('mcpEnabled',async(id,enabled)=>{if(ai.busy)throw Error('Finish the current task before changing connections.');return mcp.setEnabled(id,enabled);});
+  handle('mcpCheck',async id=>{if(ai.busy)throw Error('Finish the current task before checking connections.');return mcp.check(id);});
+  handle('mcpSetup',async id=>{const provider=mcpProvider(id);if(!provider?.setup)throw Error('No account setup is needed.');await shell.openExternal(provider.setup);return {status:'opened'};});
+  handle('mcpAuthorize',async id=>{if(ai.busy)throw Error('Finish the current task before connecting an account.');return mcp.authorize(id,url=>shell.openExternal(url));});
+  handle('mcpChooseRoots',async()=>{if(ai.busy)throw Error('Finish the current task first.');const result=await dialog.showOpenDialog(main,{title:'Folders MCP tools may access',properties:['openDirectory','multiSelections'],defaultPath:app.getPath('documents')});if(!result.canceled)await mcp.setRoots(result.filePaths);return mcp.status();});
   handle('localVoiceStart',()=>{if(ai.busy)throw new Error('Wait for the current reply.');return localConversation.start();});
   handle('localVoiceStop',()=>{localConversation.stop();return {status:'stopped'};});
   handle('localVoiceInput',(generation,sampleRate)=>localConversation.beginInput(generation,sampleRate));
@@ -393,46 +426,45 @@ function registerIPC() {
   handle('checkComputer',async()=>{requireDesktop();return desktopActivity.run(null,async()=>{const result=await computer.listWindows({query:''});send('computerState',computerStatus());return {...computerStatus(),windowsFound:result.windows.length};});});
   handle('stopTasks',stopTasks,['index.html','pet.html']);
   handle('resumeComputer',()=>{if(!store.data.settings.allowDesktop)throw new Error('Enable and save Desktop actions first.');computer.resume();send('computerState',computerStatus());return computerStatus();});
-  handle('state',()=>({version:app.getVersion(),settings:{...store.data.settings,screenId:String(targetDisplay().id)},hasKey:!!apiKey,hasDeepSeekKey:!!deepseekKey,screens:screen.getAllDisplays().map(d=>({id:String(d.id),label:d.label||`Display ${d.id}`,width:d.size.width,height:d.size.height})),calendar:fs.existsSync(path.join(app.getPath('userData'),'calendar.ics')),voiceActive}));
+  handle('state',()=>({version:app.getVersion(),settings:{...store.data.settings,screenId:String(targetDisplay().id)},hasKey:!!apiKey,chatgpt:chatgptAuth.publicState(),screens:screen.getAllDisplays().map(d=>({id:String(d.id),label:d.label||`Display ${d.id}`,width:d.size.width,height:d.size.height})),calendar:fs.existsSync(path.join(app.getPath('userData'),'calendar.ics')),voiceActive}));
   handle('saveSettings',async values=>{
     if(!values||typeof values!=='object')throw new Error('Invalid settings.');
     if(ai.busy||voiceActive||localConversation.active)throw new Error('End the current conversation before changing AI settings.');
-    if(values.chatProvider!==undefined&&!['local','deepseek'].includes(values.chatProvider))throw new Error('Invalid chat provider.');
+    if(values.chatProvider!==undefined&&!['local','chatgpt'].includes(values.chatProvider))throw new Error('Invalid chat provider.');
     if(values.transcriptionProvider!==undefined&&values.transcriptionProvider!=='local')throw new Error('Dictation stays local.');
     if(values.localGrounding!==undefined&&typeof values.localGrounding!=='boolean')throw new Error('Invalid visual targeting setting.');
     const workflowSettings={};for(const key of ['workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows']){if(values[key]!==undefined&&typeof values[key]!=='boolean')throw Error('Invalid workflow setting.');workflowSettings[key]=values[key]??store.data.settings[key]??true;}
     const localGrounding=values.localGrounding??store.data.settings.localGrounding??false;
-    const localSettings={chatProvider:values.chatProvider||'local',transcriptionProvider:'local',localChatModel:values.localChatModel||'mitch-local',localChatUrl:values.localChatUrl||'http://127.0.0.1:22130/v1',localSpeechUrl:values.localSpeechUrl||'http://127.0.0.1:22132',deepseekChatModel:values.deepseekChatModel||store.data.settings.deepseekChatModel||DEFAULT_MODEL};
+    const localSettings={chatProvider:values.chatProvider||'chatgpt',transcriptionProvider:'local',localChatModel:values.localChatModel||'mitch-local',localChatUrl:values.localChatUrl||'http://127.0.0.1:22130/v1',localSpeechUrl:values.localSpeechUrl||'http://127.0.0.1:22132'};
     localURL(localSettings.localChatUrl,'chat/completions');localURL(localSettings.localSpeechUrl,'transcribe');
     if(!/^[a-zA-Z0-9._/-]{1,160}$/.test(localSettings.localChatModel))throw new Error('Invalid local model name.');
-    deepseekModel(localSettings.deepseekChatModel);
-    const nextDeepSeekKey=values.deepseekKey||deepseekKey;
-    if(localSettings.chatProvider==='deepseek'){
-      deepseekHeaders(nextDeepSeekKey);
-    }
-    let encryptedDeepSeekKey=store.data.encryptedDeepSeekKey||'';
-    if(values.deepseekKey){deepseekHeaders(values.deepseekKey);if(!await safeStorage.isAsyncEncryptionAvailable())throw new Error('Windows secure storage is unavailable.');encryptedDeepSeekKey=(await safeStorage.encryptStringAsync(values.deepseekKey)).toString('base64');}
-    for(const key of ['voiceModel','chatModel','transcriptionModel']) {if(typeof values[key]!=='string'||!/^[a-zA-Z0-9._-]{1,80}$/.test(values[key]))throw new Error('Invalid model name.');}
-    if(values.key){if(typeof values.key!=='string'||values.key.length>500||/\s/.test(values.key))throw new Error('Invalid API key.');if(!await safeStorage.isAsyncEncryptionAvailable())throw new Error('Windows secure storage is unavailable.');store.data.encryptedKey=(await safeStorage.encryptStringAsync(values.key)).toString('base64');apiKey=values.key;}
     if(store.data.settings.screenId!==String(values.screenId||'')){shapes=[];screenSnapshot.value=null;updateOverlay();}
     const desktopWasEnabled=store.data.settings.allowDesktop,wakeWasEnabled=store.data.settings.wakeEnabled;
-    store.data.settings={voiceModel:values.voiceModel,chatModel:values.chatModel,transcriptionModel:values.transcriptionModel,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
+    store.data.settings={...store.data.settings,screenId:String(values.screenId||''),allowScreen:!!values.allowScreen,allowDesktop:!!values.allowDesktop,wakeEnabled:!!values.wakeEnabled,formatDictation:!!values.formatDictation};
     Object.assign(store.data.settings,localSettings);
     store.data.settings.localGrounding=localGrounding;
     Object.assign(store.data.settings,workflowSettings);
     Object.assign(store.data.settings,{localOnly:true,transcriptionProvider:'local',localVoiceLanguage:'en-us'});
-    store.data.encryptedDeepSeekKey=encryptedDeepSeekKey;deepseekKey=nextDeepSeekKey;ai.history=[];
+    ai.history=[];chatgptProvider.close();
     store.save();if(desktopWasEnabled&&!values.allowDesktop)await stopTasks();
     await wake.configure({enabled:values.wakeEnabled,available:true});if(values.wakeEnabled&&!wakeWasEnabled)await wake.resume();stateChanged();return {status:'saved'};
   });
   handle('deleteKey',async()=>{apiKey='';store.data.encryptedKey='';store.save();await wake.configure({enabled:store.data.settings.wakeEnabled,available:true});stateChanged();return {status:'removed'};});
-  handle('deleteDeepSeekKey',()=>{if(ai.busy||localConversation.active)throw new Error('End the current conversation first.');deepseekKey='';store.data.encryptedDeepSeekKey='';store.save();stateChanged();return {status:'removed'};});
-  handle('testDeepSeek',values=>{
-    if(!values||typeof values!=='object')throw new Error('Invalid connection settings.');
-    if(ai.busy||localConversation.active)throw new Error('End the current conversation first.');
-    const key=values.deepseekKey||deepseekKey;
-    return checkDeepSeek(fetch,values,key,AbortSignal.timeout(120000));
+  const resetReasoning=async()=>{if(ai.busy||localConversation.active)await stopTasks();else{ai.cancel();dispatch.cancel();}ai.history=[];chatgptProvider.close();};
+  handle('chatgptSignIn',async values=>{
+    if(values!==undefined&&(!values||typeof values!=='object'||values.accountId!==undefined&&typeof values.accountId!=='string'||values.enablePlan!==undefined&&typeof values.enablePlan!=='boolean'))throw Error('Invalid connection request.');
+    await resetReasoning();await chatgptAuth.signIn(values||{});
+    store.data.settings.chatProvider='chatgpt';store.save();
+    if(chatgptAuth.publicState().planUsage)await chatgptAuth.catalog();
+    stateChanged();return chatgptAuth.publicState();
   });
+  handle('chatgptCancelSignIn',()=>{chatgptAuth.cancelSignIn();return chatgptAuth.publicState();});
+  handle('chatgptDisconnect',async()=>{await resetReasoning();return chatgptAuth.disconnect();});
+  handle('chatgptSwitch',async id=>{if(typeof id!=='string')throw Error('Choose a saved connection.');await resetReasoning();await chatgptAuth.switchAccount(id);if(chatgptAuth.publicState().planUsage)await chatgptAuth.catalog();return chatgptAuth.publicState();});
+  handle('chatgptModels',()=>chatgptAuth.catalog());
+  handle('chatgptSelect',async values=>{if(ai.busy||localConversation.active)throw Error('End the current conversation before changing models.');if(!values||typeof values!=='object')throw Error('Choose a model preference.');chatgptProvider.close();return chatgptAuth.select(values);});
+  handle('chatgptResume',async()=>{await chatgptProvider.resume();return chatgptAuth.publicState();});
+  handle('chatgptUsage',()=>shell.openExternal('https://chatgpt.com/settings/usage'));
   handle('chat',async text=>{const scope=desktopActivity.beginScope();try{return await ai.chat(text,undefined,scope);}finally{desktopActivity.endScope(scope);}});
   handle('resetChat',()=>{if(ai.busy)throw new Error('Wait for the current reply.');ai.history=[];return {status:'cleared'};});
   handle('voiceOffer',sdp=>ai.voice(sdp));
@@ -486,6 +518,11 @@ function registerIPC() {
 }
 async function smokeTest() {
   const dir=path.join(process.cwd(),'test-output');fs.mkdirSync(dir,{recursive:true});
+  if(process.argv.includes('--mcp-settings-test')){
+    try{await require(path.join(process.cwd(),'tests/mcp-settings-smoke.js'))({main,mcp,store,dispatch,directory:dir,version:app.getVersion(),packaged:app.isPackaged});}
+    finally{await mcp.close();await computer.stop();}
+    quitting=true;app.quit();return;
+  }
   if(process.argv.includes('--folder-access-test')){
     store.data.settings.allowDesktop=true;store.data.settings.allowScreen=false;
     const reportFile=path.join(dir,'folder-packaged-integration.json');
@@ -530,7 +567,7 @@ async function smokeTest() {
     quitting=true;app.quit();return;
   }
   if(process.argv.includes('--provider-settings-test')){
-    await require('./tests/deepseek-settings-smoke')({main,store,ai,safeStorage,directory:dir});
+    await require(path.join(process.cwd(),'tests/chatgpt-settings-smoke.js'))({main,store,ai,chatgptAuth,safeStorage,directory:dir});
     quitting=true;app.quit();return;
   }
   if(process.argv.includes('--visual-center-test')){
@@ -591,7 +628,8 @@ async function smokeTest() {
   const testScope=desktopActivity.beginScope(),originalDialog=dialog.showMessageBox;
   const controlTitle=`Pixie Automated Control Check ${process.pid}`;
   main.setTitle(controlTitle);
-  dialog.showMessageBox=async()=>{throw new Error('Unexpected per-action permission dialog.');};
+  let sensitiveTestApprovals=0;
+  dialog.showMessageBox=async(_window,options)=>{assert.equal(options.title,'Approve sensitive action');assert.equal(options.detail,'Confirm test');sensitiveTestApprovals++;return {response:1};};
   try {
     await main.webContents.executeJavaScript("document.querySelector('[data-page=chat]').click()");
     // Shell elevation may launch with an initial hidden show command. Make our
@@ -633,6 +671,7 @@ async function smokeTest() {
       for(let i=0;i<10&&!fs.existsSync(fixtureOutput);i++)await new Promise(r=>setTimeout(r,50));
       assert.equal(fs.readFileSync(fixtureOutput,'utf8').replace(/^\uFEFF/,''),'Automatic legacy input');
     } finally {fixture.kill();}
+    assert.equal(sensitiveTestApprovals,2,'Both native and legacy consequential clicks require approval; ordinary edits do not.');
     if(process.argv.includes('--calculator-test'))await require(path.join(process.cwd(),'tests/calculator-integration.js'))({dispatch,activityScope:testScope,directory:dir,version:app.getVersion()});
     if(process.argv.includes('--visual-test')){
       const screenAllowed=store.data.settings.allowScreen;store.data.settings.allowScreen=true;
@@ -692,7 +731,7 @@ async function smokeTest() {
   const calendar=await readCalendar({from:'2026-11-07T00:00:00Z',to:'2026-11-10T00:00:00Z'});assert.equal(calendar.events.length,2);fs.unlinkSync(calendarFile);
   await require(path.join(process.cwd(),'tests/pet-integration.js'))({main,pet,screen,directory:dir,version:app.getVersion()});
   if(process.argv.includes('--wake-test'))await require(path.join(process.cwd(),'tests/wake-integration.js'))({helper:path.join(app.isPackaged?root.replace(/app\.asar$/,'app.asar.unpacked'):root,'wake-word.ps1'),main,directory:dir,version:app.getVersion()});
-  fs.writeFileSync(path.join(dir,'smoke-result.json'),JSON.stringify({status:'passed',version:app.getVersion(),packaged:app.isPackaged,administrator,checks:['renderer loads','settings navigation','Cua executable bundled','Cua connection via trusted renderer IPC','Stop cancels and terminates driver','paused tool refusal','explicit Resume','Cua text input without a permission dialog','combined window discovery and inspection','fast local sequence with exact text readback and independent click verification','legacy text and button actions without permission dialogs','blue corners visible on every monitor','overlay center transparent','corners hidden after task completion','local note via IPC','pet resize','unsafe URL refusal','Spotify desktop query encoding (mock OS launcher)','Spotify web search encoding (mock OS launcher)','Windows secure storage round trip','Windows app discovery','screen capture','overlay drawing','composite capture of user marks','stale screenshot refusal','recurring ICS events and exclusions'],appsFound:list.apps.length},null,2));
+  fs.writeFileSync(path.join(dir,'smoke-result.json'),JSON.stringify({status:'passed',version:app.getVersion(),packaged:app.isPackaged,administrator,checks:['renderer loads','settings navigation','Cua executable bundled','Cua connection via trusted renderer IPC','Stop cancels and terminates driver','paused tool refusal','explicit Resume','Cua text input without a permission dialog','combined window discovery and inspection','fast local sequence with exact text readback and independent click verification','ordinary edits automatic; consequential native and legacy clicks require approval','blue corners visible on every monitor','overlay center transparent','corners hidden after task completion','local note via IPC','pet resize','unsafe URL refusal','Spotify desktop query encoding (mock OS launcher)','Spotify web search encoding (mock OS launcher)','Windows secure storage round trip','Windows app discovery','screen capture','overlay drawing','composite capture of user marks','stale screenshot refusal','recurring ICS events and exclusions'],appsFound:list.apps.length},null,2));
   if(process.argv.includes('--launch-after-smoke'))app.relaunch({args:process.argv.slice(1).filter(arg=>!['--smoke-test','--launch-after-smoke','--calculator-test','--visual-test','--wake-test'].includes(arg))});
   quitting=true;app.quit();
 }
@@ -704,36 +743,47 @@ if(!app.requestSingleInstanceLock()){app.quit();}else{
     const helperRoot=app.isPackaged?root.replace(/app\.asar$/, 'app.asar.unpacked'):root;
     cua=new CuaClient({executable:path.join(helperRoot,'vendor','cua-driver','cua-driver.exe')});
     // Desktop permission is granted once in Settings. Target and cancellation checks still run per action.
-    computer=new ComputerUse({client:cua,getSettings:()=>store.data.settings,confirm:async()=>true,restoreWindow:args=>ps({action:'restore_window',...args})});
+    computer=new ComputerUse({client:cua,getSettings:()=>store.data.settings,confirm:(action,context)=>approveActions([action],confirmConsequentialAction,context),restoreWindow:args=>ps({action:'restore_window',...args}),signals:new NativeStateSignals({helper:path.join(helperRoot,'native-state-signals.ps1')})});
+    app.once('will-quit',()=>computer.signals.stop());
     visual=new ComputerVisual({computer,compareImages:(before,after)=>compareImages(nativeImage,before,after)});
     wake=new WakeService({listener:new WakeListener({helper:path.join(helperRoot,'wake-word.ps1')}),onState:wakeStateChanged,onWake:event=>{if(main&&!main.isDestroyed())main.webContents.send('companion:wakeDetected',event);}});
     if(store.data.encryptedKey){try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedKey,'base64'));apiKey=unlocked.result;if(unlocked.shouldReEncrypt){store.data.encryptedKey=(await safeStorage.encryptStringAsync(apiKey)).toString('base64');store.save();}}catch{dialog.showErrorBox('API key unavailable','Windows could not unlock the saved key. Enter it again in Settings.');}}
-    if(store.data.encryptedDeepSeekKey){try{const unlocked=await safeStorage.decryptStringAsync(Buffer.from(store.data.encryptedDeepSeekKey,'base64'));deepseekKey=unlocked.result;if(unlocked.shouldReEncrypt){store.data.encryptedDeepSeekKey=(await safeStorage.encryptStringAsync(deepseekKey)).toString('base64');store.save();}}catch{dialog.showErrorBox('DeepSeek key unavailable','Windows could not unlock the DeepSeek key. Enter it again in Settings.');}}
     session.defaultSession.setPermissionRequestHandler((contents,permission,callback,details)=>callback(permission==='media'&&localPages.has(contents.getURL())&&contents===main?.webContents&&!details.mediaTypes?.includes('video')));
     session.defaultSession.setPermissionCheckHandler((contents,permission)=>permission==='media'&&contents===main?.webContents&&localPages.has(contents.getURL()));
     await startBrowserBridge();
-    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch,undefined,async()=>deepseekKey);ai.onTaskTiming=publishTaskTiming;localConversation=new LocalConversation(ai,()=>store.data.settings,undefined,{prepare:prepareVoiceDesktop,notify:event=>{if(main&&!main.isDestroyed())main.webContents.send('companion:localVoiceProgress',event);}});ai.onVoiceError=failVoice;registerIPC();makeWindows();await configureTaskPlanning();
+    let authEpoch=0;
+    chatgptAuth=new ChatGPTAuth({storage:protectedStorage(app.getPath('userData'),safeStorage),openBrowser:url=>shell.openExternal(url),onChange:state=>{
+      if(chatgptAuth.epoch!==authEpoch){authEpoch=chatgptAuth.epoch;ai?.cancel();localConversation?.stop();dispatch?.cancel();if(ai)ai.history=[];chatgptProvider?.close();}
+      send('chatgptState',state);
+      if(process.argv.includes('--connect-chatgpt')||process.argv.includes('--settings'))try{fs.mkdirSync(path.join(process.cwd(),'test-output'),{recursive:true});fs.writeFileSync(path.join(process.cwd(),'test-output','chatgpt-live-status.json'),JSON.stringify({version:app.getVersion(),status:state.status,connected:state.connected,planUsage:state.planUsage,modelCount:state.models.length,at:new Date().toISOString()}));}catch{}
+    }});
+    await chatgptAuth.init();store.save();
+    const runtimeFile=path.join(app.getPath('userData'),'mcp-runtime.json');
+    mcp=new McpHub({runtimeFile:fs.existsSync(runtimeFile)?runtimeFile:path.join(process.cwd(),'outputs/mcp-runtime/mcp-runtime.json'),directory:path.join(app.getPath('userData'),'mcp'),storage:protectedStorage(app.getPath('userData'),safeStorage,'mcp-auth.json'),confirm:confirmConsequentialAction,onChange:state=>send('mcpState',state)});
+    await mcp.init();
+    chatgptProvider=new ChatGPTResponses({auth:chatgptAuth,onStatus:status=>send('taskStatus',status),onMetrics:metric=>{send('modelTiming',metric);if(ai){ai.lastModelTiming=metric;if(ai.taskTiming)(ai.taskTiming.modelCalls||=[]).push(metric);}}});
+    makeDispatcher();ai=new AI(()=>store.data.settings,async()=>apiKey,dispatch,undefined,chatgptProvider);ai.mcp=mcp;ai.onTaskTiming=publishTaskTiming;ai.onStream=event=>send('chatStream',event);ai.onStatus=status=>send('taskStatus',status);localConversation=new LocalConversation(ai,()=>store.data.settings,undefined,{prepare:prepareVoiceDesktop,notify:event=>{if(main&&!main.isDestroyed())main.webContents.send('companion:localVoiceProgress',event);}});ai.onVoiceError=failVoice;registerIPC();makeWindows();await configureTaskPlanning();
+    if(!smoke&&store.data.settings.allowDesktop)for(const id of ['filesystem','desktop','excel','playwright'])if(mcp.ready(id))mcp.connect(id).catch(()=>{});
     main.webContents.on('render-process-gone',()=>stopTasks().catch(()=>{}));
     main.webContents.once('did-finish-load',()=>{if(!smoke)wake.configure({enabled:store.data.settings.wakeEnabled,available:true}).catch(error=>send('notice',error.message));});
     setInterval(()=>{const due=store.due();for(const item of due){if(Notification.isSupported())new Notification({title:'Mitch reminder',body:item.title}).show();send('notice',item.title);}if(due.length)stateChanged();},1000).unref();
     if(smoke){if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));await smokeTest();}
-    if(!app.isPackaged&&!smoke&&process.argv.includes('--deepseek-live-test')){
+    if(!smoke&&(process.argv.includes('--connect-chatgpt')||process.argv.includes('--settings'))){
       if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
-      await require('./tests/deepseek-live-smoke')({main,ai,directory:path.join(root,'test-output')});
-    }
-    if(!app.isPackaged&&!smoke&&process.argv.includes('--deepseek-thinking-test')){
-      if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
-      await require('./tests/deepseek-thinking-live')({ai,directory:path.join(root,'test-output')});
-      main.show();main.focus();
+      showMain();await main.webContents.executeJavaScript("go('settings')");
+      if(process.argv.includes('--connect-chatgpt'))await main.webContents.executeJavaScript("document.getElementById('chatgptSignIn').click()");
     }
     if(!app.isPackaged&&!smoke&&process.argv.includes('--calculator-agent-test')){
       if(main.webContents.isLoading())await new Promise(r=>main.webContents.once('did-finish-load',r));
       await require('./tests/calculator-agent-integration')({ai,main,dispatch,desktopActivity,computer,directory:path.join(root,'test-output')});
     }
     if(!app.isPackaged&&!smoke&&process.argv.includes('--grounding-audit'))await require('./tests/grounding-audit')({ai,directory:path.join(root,'test-output')});
+    if(!app.isPackaged&&!smoke&&process.argv.includes('--spotify-mcp-test')){
+      try{await require('./scripts/test-spotify-recovery')({mcp,dispatch,desktopActivity});}finally{await mcp.close();await computer.stop();quitting=true;app.quit();}
+    }
     if(!app.isPackaged&&!smoke&&process.argv.includes('--grounding-refinement-audit'))await require('./tests/grounding-refinement-audit')({ai,nativeImage,directory:path.join(root,'test-output')});
   }).catch(error=>{fs.mkdirSync(path.join(process.cwd(),'test-output'),{recursive:true});fs.writeFileSync(path.join(process.cwd(),'test-output','startup-error.txt'),error.stack);if(!smoke)dialog.showErrorBox('Companion could not start',error.message);app.exit(1);});
 }
-app.on('before-quit',()=>{quitting=true;localConversation?.stop();wake?.close().catch(()=>{});globalShortcut.unregisterAll();ai?.cancel();ai?.closeVoice();dispatch?.cancel();voiceController.abort();visual?.clear();desktopActivity?.stop();activityOverlay?.destroy();computer?.stop().catch(()=>{});for(const child of windowsChildren)child.kill();});
+app.on('before-quit',()=>{quitting=true;chatgptAuth?.close();chatgptProvider?.close();localConversation?.stop();wake?.close().catch(()=>{});globalShortcut.unregisterAll();ai?.cancel();ai?.closeVoice();dispatch?.cancel();voiceController.abort();visual?.clear();desktopActivity?.stop();activityOverlay?.destroy();computer?.stop().catch(()=>{});for(const child of windowsChildren)child.kill();});
 app.on('window-all-closed',()=>{if(quitting)app.quit();});
-app.on('before-quit',()=>{browserBridge?.stop().catch(()=>{});});
+app.on('before-quit',()=>{mcp?.close().catch(()=>{});browserBridge?.stop().catch(()=>{});});

@@ -34,12 +34,12 @@ test('offline model-loop smoke validates both versions and records independent c
     else message={role:'assistant',content:'Saved the requested fixture value.'};
     assert.ok(calls.length<15);return {ok:true,status:200,json:async()=>({choices:[{finish_reason:message.tool_calls?'tool_calls':'stop',message}],usage:{prompt_tokens:1,completion_tokens:1}})};
   };
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mitch-workflow-benchmark-test-')),report=await runBenchmark({key:'mock-key',settings:{chatProvider:'deepseek',deepseekChatModel:'deepseek-flash',chatModel:'gpt-6-luna'},directory,fetcher,mock:true,repeats:1});
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mitch-workflow-benchmark-test-')),report=await runBenchmark({settings:{chatProvider:'chatgpt',chatModel:'gpt-6-luna'},directory,fetcher,mock:true,repeats:1});
   assert.equal(report.status,'completed');assert.equal(report.rows.length,4);assert.equal(report.rows.every(row=>row.verified&&row.invalidToolCalls===0),true);assert.equal(report.rows.every(row=>row.reviews.some(r=>r.decision==='complete'&&r.fixtureComplete)),true);assert.equal(report.summary.workflow.modelRequests<report.summary.baseline.modelRequests,true);
 });
 test('cache benchmark learns through the cold AI loop and verifies its actual warm replay',async()=>{
   let calls=0;const fetcher=async(_url,options)=>{calls++;const body=JSON.parse(options.body);const message=body.response_format?{role:'assistant',content:JSON.stringify({decision:'complete',answer:'Found Alpha.',reason:'Alpha is now the visible search result.'})}:{role:'assistant',content:null,tool_calls:[{id:'cache-test-'+calls,type:'function',function:{name:'computer_run_workflow',arguments:JSON.stringify({version:1,steps:[bind('Customer workspace'),phase([{op:'fill',target:t('Search','textbox'),text:'Alpha'},{op:'click',target:t('Search')}],[exists('Alpha')])],completion:[exists('Alpha')]})}}]};return {ok:true,status:200,json:async()=>({choices:[{finish_reason:message.tool_calls?'tool_calls':'stop',message}]})};};
-  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mitch-cache-benchmark-test-')),report=await runCacheBenchmark({key:'mock-key',settings:{chatProvider:'deepseek',deepseekChatModel:'deepseek-flash',chatModel:'gpt-6-luna'},directory,fetcher,mock:true});
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'mitch-cache-benchmark-test-')),report=await runCacheBenchmark({settings:{chatProvider:'chatgpt',chatModel:'gpt-6-luna'},directory,fetcher,mock:true});
   assert.equal(report.status,'completed');assert.equal(calls,2);assert.equal(report.rows[0].cachedProceduresAfter,1);assert.equal(report.rows[0].modelRequests,2);assert.equal(report.rows[1].modelRequests,0);assert.equal(report.rows[1].route,'replay');assert.equal(report.rows[1].verified,true);assert.equal(report.rows[1].inputCount,2);
 });
 test('nonthinking experiment overrides only the preferred planner and preserves reviewer/fallback settings',async()=>{

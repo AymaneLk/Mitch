@@ -8,7 +8,7 @@ async function build() {
   const results = await packager({
     dir: __dirname, name: 'Mitch', platform: 'win32', arch: 'x64',
     out: process.argv[2] ? path.resolve(process.argv[2]) : path.join(__dirname, 'outputs/windows-build'),
-    overwrite: true, asar: {unpack: '{windows,wake-word,folder-helper}.ps1', unpackDir: 'vendor'}, prune: true,
+    overwrite: true, asar: {unpack: '{windows,wake-word,folder-helper,native-state-signals,native-text}.ps1', unpackDir: 'vendor'}, prune: true,
     icon: path.join(__dirname, 'assets/companion.ico'), appVersion: require('./package.json').version,
     download: {cacheRoot: path.join(__dirname, '.electron-cache')},
     ignore: ignorePackageFile,
@@ -18,6 +18,8 @@ async function build() {
     if (!fs.existsSync(path.join(result,'resources/app.asar.unpacked/vendor/cua-driver/cua-driver.exe'))) throw new Error('Packaged Cua executable was not unpacked.');
     if (!fs.existsSync(path.join(result,'resources/app.asar.unpacked/wake-word.ps1'))) throw new Error('Packaged local wake listener was not unpacked.');
     if (!fs.existsSync(path.join(result,'resources/app.asar.unpacked/folder-helper.ps1'))) throw new Error('Packaged folder helper was not unpacked.');
+    if (!fs.existsSync(path.join(result,'resources/app.asar.unpacked/native-state-signals.ps1'))) throw new Error('Packaged native state listener was not unpacked.');
+    if (!fs.existsSync(path.join(result,'resources/app.asar.unpacked/native-text.ps1'))) throw new Error('Packaged native text helper was not unpacked.');
     await verifyAdministratorManifest(path.join(result,'Mitch.exe'));
   }
   console.log(results.join('\n'));

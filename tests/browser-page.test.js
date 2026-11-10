@@ -125,8 +125,14 @@ function domFixture(){
   const agent=createPageAgent({window,document,plan}),message=(type,fields={})=>({type,id:'dom-'+Math.random(),deadline:Date.now()+1000,expectedUrl:window.location.href,...fields});
   const observe=()=>agent.handle(message('mitch_page_observe'));
   const execute=async(steps,completion)=>{const frame=await observe();return agent.handle(message('mitch_page_plan',{snapshot:frame.snapshot,steps,completion}));};
-  return {state,window,document,add,agent,message,observe,execute};
+  return {state,window,document,add,agent,message,observe,execute,mutate:()=>observer()};
 }
+test('page candidate index is reused while values stay live and mutations invalidate it',async()=>{
+  const f=domFixture(),field=f.add('input','Search');field.value='before';await f.observe();await f.observe();assert.equal(f.agent.diagnostics().candidateScans,1);
+  field.value='after';assert.equal((await f.observe()).controls[0].value,'after');assert.equal(f.agent.diagnostics().candidateScans,1);
+  f.add('button','New control');f.mutate();assert.equal((await f.observe()).controls.length,2);assert.equal(f.agent.diagnostics().candidateScans,2);
+  field.hidden=true;assert.equal((await f.observe()).controls.length,1);
+});
 test('DOM observation exposes names/roles, omits protected values and hides invisible controls',async()=>{
   const {add,observe}=domFixture();add('input','Search').value='ordinary';add('input','Password',{type:'password'}).value='NEVER-EXPOSE';add('button','Hidden').hidden=true;
   const frame=await observe();assert.equal(frame.complete,true);assert.deepEqual(frame.controls.map(control=>control.name),['Search','Password']);
@@ -196,4 +202,23 @@ test('stale page snapshot and changed origin stop without actions',async()=>{
 test('large DOM snapshots report incompleteness while a specific selector remains bounded and complete',async()=>{
   const {add,observe,agent,message}=domFixture();for(let i=0;i<305;i++)add('button','Button '+i);assert.equal((await observe()).complete,false);
   const frame=await agent.handle(message('mitch_page_observe',{selector:target('button','Button 304')}));assert.equal(frame.complete,true);assert.equal(frame.controls.length,1);
+});
+
+test('semantic ancestors and open shadow roots support exact targeting, focus and visibility',async()=>{
+ const f=domFixture(),host=f.add('section','Embedded settings'),field=f.add('input','Public label');
+ const root={host,activeElement:null,querySelectorAll:()=>[field],elementFromPoint:()=>field,getElementById:()=>null};host.shadowRoot=root;
+ field.getRootNode=()=>root;field.focus=()=>{f.document.activeElement=host;root.activeElement=field;};f.document.querySelectorAll=()=>[host];f.state.hit=host;
+ let view=await f.observe();assert.equal(view.controls.find(c=>c.name==='Public label').ancestors[0].name,'Embedded settings');
+ const scoped={name:'Public label',within:{name:'Embedded settings',role:'region'}};
+ const result=await f.execute([{op:'fill',target:scoped,text:'New value'}],[{target:scoped,condition:'value',value:'New value'}]);assert.equal(result.verified,true,JSON.stringify(result));
+ host.hidden=true;view=await f.observe();assert.equal(view.controls.length,0);f.agent.disconnect();
+});
+test('embedded frame input is bound to its browser document identity and denied after replacement',async()=>{
+ for(const changed of [false,true]){
+  const f=operationsFixture(),frame={frame_id:3,browser_document_id:'frame-document',url:'https://embedded.test/editor'};
+  f.api.scripting.executeScript=async request=>{f.state.calls.push({kind:'inject',request});return [{frameId:3,documentId:changed?'replacement':'frame-document',result:{url:frame.url}}];};
+  const result=await f.operations.execute('page.plan',{...body,expectedFrame:frame},f.context('embedded-'+changed));
+  const sent=f.state.calls.filter(c=>c.kind==='send');assert.equal(sent.length,changed?0:1);
+  if(changed){assert.equal(result.code,'stale_frame');assert.equal(result.action_attempted,false);}else{assert.deepEqual(sent[0].options,{documentId:'frame-document'});assert.equal(sent[0].message.expectedUrl,frame.url);}
+ }
 });

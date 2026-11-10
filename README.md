@@ -2,9 +2,15 @@
 
 Mitch is an open-source AI desktop assistant for Windows, with notes, reminders, dictation, screen understanding, and native/browser computer control.
 
-**Preview 0.6.0-local.22 · Windows 10/11 x64 · MIT licensed**
+**Preview 0.6.0-local.33 · Windows 10/11 x64 · MIT licensed**
 
 This is an independent implementation inspired by Pixie for macOS, not an official Pixie release or a complete port. No extracted app assets, proprietary prompts, or private Pixie services are included. See the [changelog](CHANGELOG.md).
+
+The current version combines ChatGPT sign-in with structured browser/Windows automation and MCP-first routing. Seven optional integrations cover Filesystem, Desktop Commander, Excel, Playwright, Google Workspace, GitHub and Spotify. Account services require separate setup and consent; installation alone does not grant access. See [MCP setup and validation](docs/MCP-CONNECTIONS.md). v33 fixes Spotify desktop playback through the MCP, including app launch after a confirmed no-device rejection and playback confirmation without another AI call. See [the measured results and album-playback limitation](docs/SPOTIFY-PLAYBACK-FIX.md).
+
+v28 improves general structured computer use with compact plans, prepared-scope references, named-container targeting, open shadow DOM, document-bound embedded frames and a capability-checked native text fallback. It preserves v27 recovery and blocks uncertain replay. Browser Bridge is now 1.6.0; reload the extension and refresh existing pages, with no new permission. See [the architecture audit](docs/GENERAL-ENGINE-AUDIT.md) and [measured results and limits](docs/GENERAL-ENGINE-RESULTS.md).
+
+v25 adds fast, verified YouTube search/ranked playback, Wikipedia articles and GitHub repository search/ranked opening. Recognized requests run locally through Browser Bridge 1.4.0, without model calls. Reload the existing extension to activate them; no new permission is needed. Real-site timings, ad delays and remaining general-task limits are documented in [real website validation](docs/REAL-WEB-SPEED.md).
 
 ## Install from source
 
@@ -13,25 +19,27 @@ Use Git and Node.js 24 or later on Windows:
 ```powershell
 git clone https://github.com/AymaneLk/Mitch.git
 cd Mitch
-git switch codex/local-ai-architecture
+git switch codex/chatgpt-oauth
 npm ci
 npm run setup:cua
 npm start
 ```
 
-Choose DeepSeek in Settings and enter your own API key for cloud chat and planning, or configure the local runtime described below. DeepSeek usage is billed to your API account. OpenAI API calls are disabled in this edition. Local voice and dictation need the separate CPU speech services; local Qwen chat additionally needs its model service. Downloaded models and runtime environments are not included in Git or portable builds. See the [current user guide](docs/USER-GUIDE.md).
+Settings → Connect ChatGPT → **Continue with ChatGPT** opens the official OpenAI authorization flow in your system browser. Authorize an eligible account and ChatGPT plan usage, then choose a model from the returned account catalog. Subscription limits apply; Mitch never falls back to separately billed API calls. Local Qwen remains an optional provider. Voice and dictation still require the separate CPU speech services; models and Python environments are not bundled. See the [sign-in guide](docs/CHATGPT-SIGN-IN.md) and [user guide](docs/USER-GUIDE.md).
 
 The Cua setup command downloads the pinned Windows driver and verifies its checksum and Authenticode signer. If npm install scripts are disabled, run `node node_modules/electron/install.js` first. Portable builds are unsigned and request Windows administrator access through UAC; source launches use the privileges of the launching process. Extract the whole portable folder and keep its neighboring files intact.
+
+For the optional MCP integrations, install uv and run `npm run setup:mcp` before configuring connections in Settings. The pinned MCP runtimes are downloaded separately and are not included in Git or the Electron package. Local credentials, generated browser pairing configuration, models, build outputs and raw test reports are excluded from this repository.
 
 ## Permissions and privacy
 
 Screen sharing, desktop actions, and voice wake are off by default. Once enabled, desktop actions can change files and submit forms without per-action prompts. Blue screen corners indicate active computer use. **Stop or Ctrl+Alt+Escape cancels pending work and pauses computer use; delivered actions cannot be undone.** Closing the main window keeps Mitch in the tray; choose Quit to exit.
 
-With DeepSeek selected, chat, task-related app/page content, transcripts, and permitted screenshots can be sent to DeepSeek. Local speech recognition and synthesis run on your PC. Preparation while speaking may send task context to the selected model before the final transcript, but it does not execute input. Windows-protected storage protects saved API keys; local notes and settings are not encrypted. See [Security and privacy](SECURITY.md) for browser permissions, data locations, and limitations.
+With ChatGPT selected, chat, task-related app/page content, transcripts, and permitted screenshots are sent to the official Responses API using your OAuth authorization. Microphone audio, speech recognition, and synthesis stay on your PC. Preparation while speaking may send text and task context before the final transcript, but does not execute input. Windows-protected storage encrypts OAuth credentials; local notes and settings are not encrypted. See [Security and privacy](SECURITY.md).
 
 ## Contributing and license
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Mitch source is licensed under the [MIT License](LICENSE); dependencies and downloaded components retain their own licenses and [notices](THIRD_PARTY_NOTICES.md). The historical cloud edition is preserved by the `v0.5.2-cloud` tag. ChatGPT sign-in remains an unimplemented [follow-up](docs/CHATGPT-SIGN-IN.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and checks. Mitch source is licensed under the [MIT License](LICENSE); dependencies and downloaded components retain their own licenses and [notices](THIRD_PARTY_NOTICES.md). The historical cloud edition is preserved by the `v0.5.2-cloud` tag. Official ChatGPT OAuth is implemented; live account eligibility and available models are determined by OpenAI. See [setup and validation](docs/CHATGPT-SIGN-IN.md).
 
 ## Direct folder access (v0.6.0-local.22)
 
@@ -56,13 +64,13 @@ powershell -ExecutionPolicy Bypass -File scripts/start-goclick.ps1 -Stop
 
 Settings → Visual targeting exposes the experimental local proposal option, **off by default** after validation showed a regression: two visible targets took a median 3,429 ms with local proposals versus 1,194.5 ms with the existing box-refinement path. One hybrid result missed its target; a subsequently added point/box consistency guard rejects that recorded mismatch. The test supplied baseline boxes and excluded planning/execution, so these are refinement measurements, not full task times. Six live native window-switch/restore trials passed with zero model requests (356 ms switch median; 721 ms restore/switch median). These small fixtures do not establish arbitrary-task accuracy.
 
-The GoClick service is separate from the packaged app and must be restarted after reboot. The installer does not bundle the model environment. GoClick has no per-call API charge, but Flash planning and visual confirmation still use DeepSeek credit. No new browser extension reload is required for v20.
+The GoClick service is separate from the packaged app and must be restarted after reboot. The installer does not bundle the model environment. GoClick has no per-call API charge; ChatGPT planning and visual confirmation count toward your plan usage. No new browser extension reload is required for v20.
 
 ## Local AI preview
 
 By default, chat, vision and tool calls use Qwen3.5-4B Q4_K_M through llama.cpp on the GPU. Dictation and voice recognition use Nemotron Speech Streaming English 0.6B Q8 on the CPU. A local Kokoro service supplies English speech synthesis. These local requests have no API charges or provider daily quotas; they use your hardware and electricity. Failed local requests do not fall back to a paid provider.
 
-Version 0.6.0-local.9 includes optional DeepSeek Flash chat to the local edition. OpenAI API calls remain blocked even when an old key is saved. Dictation and speech synthesis stay local. Voice uses Nemotron ASR → selected chat model/tools → Kokoro with automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
+Historical version 0.6.0-local.9 introduced optional DeepSeek chat. Version 23 replaces that provider with official ChatGPT OAuth; legacy API-key billing remains disabled. Dictation and speech synthesis stay local. Voice uses Nemotron ASR → selected chat model/tools → Kokoro with automatic submission after 1.8 seconds of silence. Choose the input device in Settings; the voice bar shows its name and input level. Capture pauses while thinking/speaking; End conversation cancels pending work. This is half-duplex, not an interruptible streaming conversation. Pipecat, Silero and SmartTurn are not integrated. OmniRoute remains separate.
 
 Version 0.6.0-local.15 shows live voice captions in the floating popup using the installed CPU recognizer's streaming endpoint. After the pause, the whole popup turns red and reads “Working…”. Once the final transcript is ready, Mitch displays and says “Got it. I'm on it.” while reasoning starts. The final answer replaces that acknowledgement; the popup returns to its normal color when speaking/listening. Partial transcripts never execute actions. If streaming fails, the complete recording is transcribed through the existing local adapter. End conversation cancels pending captions and audio. No additional model or GPU service is required.
 
@@ -78,7 +86,7 @@ Mitch creates its paired extension folder inside its existing application profil
 
 Local tool turns now enable reasoning and preserve it between tool calls only. Desktop replies undergo a separate check against tool evidence, without the draft reply or private reasoning. Input delivery without a subsequent observation cannot pass the completion gate. Simple Spotify Liked Songs and current-track playback requests additionally require explicit accessible heading/track-list or transport evidence; navigation links and timestamps cannot establish completion. If those controls are unavailable or incomplete, Mitch reports unverified completion instead of accepting a model's guess. Simple play/resume/pause commands reject blind global toggles; observed Spotify Play/Pause controls are checked to prevent reversing the requested state. Named-song and more complex workflows retain the general review and are not covered by this specialized check. For local Qwen, screenshot-only analysis and short structured audits use non-thinking mode. These checks improve the tested workflows but do not make the 4B model as capable as the cloud edition or guarantee every UI interpretation.
 
-The original cloud edition is preserved by tag `v0.5.2-cloud`. Development of this local/DeepSeek edition is on `codex/local-ai-architecture`.
+The original cloud edition is preserved by tag `v0.5.2-cloud`. The v22 local/DeepSeek history remains on `codex/local-ai-architecture`; this migration is on `codex/chatgpt-oauth`.
 
 ### Setup (Windows NVIDIA)
 
@@ -100,13 +108,13 @@ Model revisions/checksums and Python dependency versions are pinned under `local
 powershell -ExecutionPolicy Bypass -File scripts/start-local-ai.ps1 -Stop
 ```
 
-For DeepSeek chat with voice but no local GPU model, start only the CPU speech services:
+For ChatGPT with local voice and no local GPU model, start only the CPU speech services:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/start-local-ai.ps1 -SpeechOnly
 ```
 
-Stopping these speech services also stops microphone transcription and spoken replies. DeepSeek text chat continues to work. Speech-only mode leaves the Qwen chat server off.
+Stopping these speech services also stops microphone transcription and spoken replies. ChatGPT text chat continues to work. Speech-only mode leaves the Qwen chat server off.
 
 ### Verification
 
@@ -135,15 +143,13 @@ Current language policy is English-only: the ASR server uses the English-only Ne
 
 To roll back recognition, stop the current local services, check out tag `v0.6.0-local.4`, and restart its local services. Qwen ASR model files remain installed. The full cloud baseline remains at `v0.5.2-cloud`.
 
-## DeepSeek API
+## ChatGPT subscription reasoning
 
-Settings → AI provider → DeepSeek uses the official https://api.deepseek.com endpoint. Paste your DeepSeek API key, test the connection, then save. Local Qwen remains available. Keys are encrypted with Windows secure storage and never returned by the settings API or stored in source files.
+Mitch uses official OAuth with PKCE, a loopback callback, verified signed identity, automatic refresh and encrypted main-process storage. Model names come from the account catalog. Fast and Smart are per-account model preferences; both initially use the server’s first listed model until you assign them. No model-specific reasoning effort is invented.
 
-DeepSeek Flash supports text, tools and screenshots. Version `0.6.0-local.14` enables thinking with High effort by default for chat, spoken conversations, desktop planning and completion reviews, with an 8,192-token response budget shared by reasoning and the answer. Provider reasoning is retained privately in memory for tool continuations and recent final replies, never shown or saved in conversation history. Explicit fast screenshot/close-up helpers retain non-thinking mode. JSON completion reviews use DeepSeek JSON mode plus local schema validation. Truncated or invalid responses do not dispatch tools. Failures do not switch providers or replay actions. End the current conversation before changing settings; saving clears conversation history.
+HTTP Responses are streamed with `store:false` and full required context. Optional WebSocket mode reuses the authenticated connection and same-connection response IDs; reconnects replay context without re-executing tools. Only completed, validated function calls reach the existing local executor. No native OpenAI computer tool or Realtime voice API is used.
 
-Chat, tool results and screenshots permitted by Screen sharing are sent to DeepSeek and billed to your DeepSeek API account. Microphone transcription and speech synthesis remain local. The existing desktop permissions and completion checks still apply.
-
-Official documentation: [API](https://api-docs.deepseek.com/), [vision](https://api-docs.deepseek.com/guides/vision/), [JSON mode](https://api-docs.deepseek.com/guides/json_mode/).
+See [the implementation and limitations](docs/CHATGPT-SIGN-IN.md). DeepSeek runtime code, key inputs and API-only benchmark launchers have been removed. Existing v22 credentials are removed from the active profile at migration; independently preserved backups are not rewritten. Historical measurements below describe those earlier builds, not GPT performance.
 
 App launches now correlate a newly created window with a fresh accessibility observation, avoiding confusion with older instances or empty internal windows. Installed-app search also matches app IDs, so English names can find localized apps. Windows Calculator uses accessible digit/operator buttons when present; pixel input is refused in that case. A task stops after three desktop failures or three inputs with no observable control-state change. These checks do not establish reliability for arbitrary desktop tasks.
 
@@ -161,7 +167,7 @@ Version `0.6.0-local.13` preserves native failure codes and whether input may al
 
 Mitch can plan a short sequence once and execute its steps locally. `computer_execute_plan` resolves live Windows accessibility controls, while `browser_read_page` and `browser_execute_plan` use the browser extension's DOM adapter. Plans can address predictable controls that appear later, such as a result opened after a search. Each phase has up to 12 typed steps and explicit completion assertions; the model independently checks those results against the original request. No model-generated JavaScript, shell commands, CSS selectors or remembered coordinates are executed.
 
-The browser adapter uses mutation-driven state invalidation, checks visibility/enabled state and occlusion before action, and reads values back after filling. The Windows adapter reuses fresh returned observations and validates the exact process/window. Its native driver still performs full accessibility reads after input; this release does not add native UIA event subscriptions. Screenshot-based interaction remains available when structured controls are unavailable.
+The browser adapter keeps a mutation-invalidated candidate index, checks live values, visibility/enabled state and occlusion before action, and reads values back after filling. The Windows adapter reuses fresh returned observations and validates the exact process/window. A persistent Windows WinEvent listener invalidates cached observations when a window or focus changes; listener failures force fresh reads. Its native driver still performs full accessibility reads after input; this is not incremental UIA subtree capture. Screenshot-based interaction remains available when structured controls are unavailable.
 
 Update the existing Mitch Browser Bridge extension with **Reload** in `opera://extensions`, then open its popup and choose **Enable page controls**. The browser requests optional access to HTTP/HTTPS sites. This lets Mitch read page controls and carry out requested actions; page data used for reasoning is sent to the selected AI provider. Tab controls continue to work without this extra permission. Password/secret/payment fields and child frames are not supported by this adapter. Removing page permission cancels in-flight page plans.
 
@@ -179,9 +185,11 @@ If full-page navigation destroys the issuing script's reply channel, the extensi
 
 Mitch can request one bounded workflow for a new desktop task instead of requesting a new model decision after each interface change. The workflow can branch on observed state, read named values, fill them into a different app, wait for an expected result, and follow a verified same-origin webpage link across a document navigation. It uses existing DOM/UIA executors and checks every action against fresh identities. It cannot execute generated JavaScript, shell commands, or arbitrary code. Incomplete controls, unknown input delivery, or an ambiguous target interrupt execution. Screenshot recovery remains available through the existing separate path.
 
-Settings → Faster tasks controls workflow execution, quick planning, preparation while speaking, and reuse. All four default on. Quick planning disables DeepSeek thinking only for the bounded workflow compiler when complete structured controls are available. General chat, recovery and independent completion reviews retain Flash High; turning quick planning off restores High for the compiler too. Preparation reads relevant app/page state and may draft a plan during stable partial speech, with at most two attempts per utterance; changing the words cancels the old draft. No click, launch, focus, restore or text entry is allowed before the final transcript. Only an exactly matching, unexpired draft can be adopted. Drafts can incur provider charges even when discarded.
+Settings → Faster tasks controls workflow execution, quick planning, preparation while speaking, and reuse. All four default on. The quick-planning toggle applies only to the optional local provider. ChatGPT uses the selected account model without unsupported reasoning settings. Preparation reads relevant app/page state and may draft a plan during stable partial speech, with at most two attempts per utterance; changing the words cancels the old draft. No click, launch, focus, restore or text entry is allowed before the final transcript. Only an exactly matching, unexpired draft can be adopted. Drafts count toward provider usage even when discarded.
 
-New workflows receive an independent whole-request completion review. Eligible procedures can be reused without new model decisions only after a fresh scope/layout check and local result checks. When all actions were acknowledged but only the last model-generated assertion was wrong, an approved complete task can learn its small, fully observed destination view instead; execution steps cannot be rewritten this way. Reuse is deliberately limited to one scope and safe display/search/edit operations; submissions, calls, deletion, security/payment actions, app launches and requests for a fresh informational answer are excluded. Stored procedures expire after 30 days, are limited to 32 entries, and are encrypted with Windows secure storage. No pixels, live element IDs or coordinate targets are saved for replay. Unknown outcomes remain task-wide input stops.
+New workflows receive an independent whole-request completion review unless the entire request matches a trusted field-edit/navigation grammar and fresh scoped controls prove that exact outcome. Adjacent action phases can be combined while preserving intermediate assertions; all final predicates use one consistent fresh frame. Eligible procedures can be reused without new model decisions after relevant controls match, followed by a full fresh scope check before input. Unrelated control ordering/content may change; relevant ambiguity and new dialogs prevent reuse. When all actions were acknowledged but only the last model-generated assertion was wrong, an approved complete task can learn its small, fully observed destination view instead; execution steps cannot be rewritten this way. Reuse is deliberately limited to one scope and safe display/search/edit operations; submissions, calls, deletion, security/payment actions, app launches and requests for a fresh informational answer are excluded. Stored procedures expire after 30 days, are limited to 32 entries, and are encrypted with Windows secure storage. No pixels, live element IDs or coordinate targets are saved for replay. Unknown outcomes remain task-wide input stops.
+
+See [v24 speed validation](docs/SPEED-VALIDATION.md) for the matched v23 comparison and model trials. The new local completion grammar includes `In "Notepad", set "Text Editor" to "Hello"` when those exact accessible names exist, and `open Instagram and go to messages` when a fresh destination heading or selected item proves navigation. Other wording, compound requests, and incomplete observations retain model review.
 
 The browser navigation feature requires Mitch Browser Bridge **1.2.0**: reload the extension in `opera://extensions` and refresh existing pages. It uses the existing granted page permissions. Older workers retain supported tab/page operations but cannot execute the new navigation methods. There is no additional GPU model and the experimental GoClick default remains off.
 

@@ -1,9 +1,12 @@
 'use strict';
 const http=require('node:http');
-const {randomUUID,timingSafeEqual}=require('node:crypto');
+const {randomUUID,timingSafeEqual,createHash}=require('node:crypto');
+const profileRevision=client=>createHash('sha256').update(JSON.stringify([client.browser,client.clientId,client.sessionId])).digest('hex');
 const {WebSocket,WebSocketServer}=require('ws');
 const {validatePlan,testCondition,matchControls,normalizeRole}=require('./action-plan');
 const {toolDiagnostics}=require('./task-timing');
+const publicSites=require('./public-site-task');
+const {approveActions}=require('./action-approval');
 const BROWSERS=new Set(['opera','chrome','edge']);
 const MAX_PAYLOAD=512*1024,MAX_TABS=5000,SNAPSHOT_TTL=30000;
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(value);
@@ -22,13 +25,13 @@ function inventory(value){
   });
 }
 class BrowserBridge {
-  constructor({token,extensionId,port=22133,timeoutMs=5000,onStatus}){
+  constructor({token,extensionId,port=22133,timeoutMs=5000,onStatus,confirm}){
     if(typeof token!=='string'||token.length<32||token.length>512)throw new TypeError('A strong browser pairing token is required.');
     if(typeof extensionId!=='string'||!/^[a-p]{32}$/.test(extensionId))throw new TypeError('Invalid browser extension identity.');
     if(!Number.isInteger(port)||port<0||port>65535||!Number.isInteger(timeoutMs)||timeoutMs<20||timeoutMs>30000)throw new TypeError('Invalid browser bridge limits.');
-    Object.assign(this,{token,extensionId,port,timeoutMs,onStatus});this.clients=new Set();this.sockets=new Set();this.pending=new Map();this.snapshots=new Map();this.pageSnapshots=new Map();this.partialPlans=new Map();this.uncertain=new Map();this.defaultScope=Symbol('browser-bridge');this.server=null;this.started=false;
+    Object.assign(this,{token,extensionId,port,timeoutMs,onStatus,confirm});this.clients=new Set();this.sockets=new Set();this.pending=new Map();this.snapshots=new Map();this.pageSnapshots=new Map();this.partialPlans=new Map();this.uncertain=new Map();this.defaultScope=Symbol('browser-bridge');this.server=null;this.started=false;
   }
-  status(){const clients=[...this.clients].filter(client=>client.ws.readyState===WebSocket.OPEN);return {running:this.started,port:this.port,connected:clients.length,pageCapable:clients.filter(client=>client.pages).length,pageAccess:clients.filter(client=>client.pages&&client.pageAccess).length,recoveryCapable:clients.filter(client=>client.pageRecovery).length,navigationCapable:clients.filter(client=>client.pageNavigation).length,browsers:[...new Set(clients.map(client=>client.browser))]};}
+  status(){const clients=[...this.clients].filter(client=>client.ws.readyState===WebSocket.OPEN);return {running:this.started,port:this.port,connected:clients.length,pageCapable:clients.filter(client=>client.pages).length,pageAccess:clients.filter(client=>client.pages&&client.pageAccess).length,recoveryCapable:clients.filter(client=>client.pageRecovery).length,navigationCapable:clients.filter(client=>client.pageNavigation).length,publicSiteCapable:clients.filter(client=>client.publicSites).length,browsers:[...new Set(clients.map(client=>client.browser))]};}
   publishStatus(){try{this.onStatus?.(this.status());}catch{}}
   async start(){
     if(this.started)return this.status();
@@ -60,7 +63,7 @@ class BrowserBridge {
       if(!client.ready){
         const supplied=typeof message.token==='string'?Buffer.from(message.token):Buffer.alloc(0),expected=Buffer.from(this.token);
         if(message.type!=='hello'||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)||!id(message.clientId)||!id(message.sessionId)||!BROWSERS.has(message.browser)){ws.close(1008,'Pairing failed');return;}
-        clearTimeout(authTimer);Object.assign(client,{ready:true,clientId:message.clientId,sessionId:message.sessionId,browser:message.browser,pages:Array.isArray(message.capabilities)&&message.capabilities.includes('pages'),pageAccess:message.pageAccess===true,pageRecovery:Array.isArray(message.capabilities)&&message.capabilities.includes('page-recovery-v1'),pageNavigation:Array.isArray(message.capabilities)&&message.capabilities.includes('page-navigation-v1')});
+        clearTimeout(authTimer);Object.assign(client,{ready:true,clientId:message.clientId,sessionId:message.sessionId,browser:message.browser,pages:Array.isArray(message.capabilities)&&message.capabilities.includes('pages'),pageAccess:message.pageAccess===true,pageRecovery:Array.isArray(message.capabilities)&&message.capabilities.includes('page-recovery-v1'),pageNavigation:Array.isArray(message.capabilities)&&message.capabilities.includes('page-navigation-v1'),publicSites:Array.isArray(message.capabilities)&&message.capabilities.includes('public-sites-v1')});
         // A new connection for this exact profile supersedes its old socket.
         for(const old of this.clients)if(old.clientId===client.clientId&&old.browser===client.browser){this.clients.delete(old);this.invalidate(old);old.ws.close(1000,'Profile reconnected');}
         this.clients.add(client);ws.send(JSON.stringify({type:'ready'}));this.publishStatus();return;
@@ -108,7 +111,7 @@ class BrowserBridge {
     for(const [key,entry] of this.snapshots)if(Date.now()-entry.created>SNAPSHOT_TTL)this.snapshots.delete(key);
     if(this.snapshots.size>=128)this.snapshots.delete(this.snapshots.keys().next().value);
     this.snapshots.set(snapshot,{client,sessionId:client.sessionId,created:Date.now(),tabs:new Map(tabs.map(tab=>[tab.id,tab]))});
-    return {status:'ok',snapshot,browser:client.browser,session_id:client.sessionId,complete:true,tabs:tabs.map(tab=>({tab_id:tab.id,window_id:tab.windowId,url:safeURL(tab.url),title:tab.title.slice(0,500),active:tab.active,pinned:tab.pinned,...(tab.pendingUrl?{navigating:true}:{})}))};
+    return {status:'ok',snapshot,browser:client.browser,session_id:client.sessionId,profile_revision:profileRevision(client),complete:true,tabs:tabs.map(tab=>({tab_id:tab.id,window_id:tab.windowId,url:safeURL(tab.url),title:tab.title.slice(0,500),active:tab.active,pinned:tab.pinned,...(tab.pendingUrl?{navigating:true}:{})}))};
   }
   async list({browser}={},context={}){
     check(context);const client=this.client(browser),epoch=client.epoch;
@@ -169,14 +172,15 @@ class BrowserBridge {
   }
   close({snapshot,tab_ids},context={}){return this.mutate('tabs.close',{snapshot,ids:tab_ids},context);}
   activate({snapshot,tab_id},context={}){return this.mutate('tabs.activate',{snapshot,ids:[tab_id]},context);}
-  pageFrame(client,tab,frame){
+  pageFrame(client,tab,frame,frameTarget){
     // Only structured, bounded page state crosses into model context. The raw
     // URL remains private for identity checks; query strings are not reported.
     if(!frame||typeof frame.snapshot!=='string'||frame.snapshot.length>160||typeof frame.document_id!=='string'||frame.document_id.length>160||typeof frame.url!=='string'||frame.url.length>8192||!Array.isArray(frame.controls)||frame.controls.length>300||typeof frame.complete!=='boolean')throw fault('invalid_page_result','The page returned invalid controls.');
-    let url;try{url=new URL(frame.url);if(!['http:','https:'].includes(url.protocol)||url.origin!==new URL(tab.url).origin)throw Error();}catch{throw fault('page_scope_changed','The page moved outside the observed origin.');}
+    let url;try{url=new URL(frame.url);if(!['http:','https:'].includes(url.protocol)||url.origin!==new URL(frameTarget?.url||tab.url).origin||(frameTarget&&frame.url!==frameTarget.url))throw Error();}catch{throw fault('page_scope_changed','The page moved outside the observed origin.');}
     const controls=frame.controls.map(control=>{
       if(!control||typeof control.id!=='string'||control.id.length>160||typeof control.name!=='string'||control.name.length>12000||typeof control.role!=='string'||control.role.length>100)throw fault('invalid_page_result','The page returned an invalid control.');
       const row={id:control.id,name:control.name.slice(0,1000),role:control.role};
+      if(Array.isArray(control.ancestors))row.ancestors=control.ancestors.slice(0,8).filter(a=>typeof a?.name==='string'&&typeof a?.role==='string').map(a=>({name:a.name.slice(0,300),role:a.role.slice(0,60)}));
       for(const key of ['enabled','editable','protected','checked','selected','focused'])if(typeof control[key]==='boolean')row[key]=control[key];
       if(typeof control.value==='string'&&!control.protected)row.value=control.value.slice(0,12000);
       if(Array.isArray(control.options)&&!control.protected)row.options=control.options.slice(0,100).filter(option=>option&&typeof option.name==='string'&&typeof option.value==='string').map(option=>({name:option.name.slice(0,500),value:option.value.slice(0,1000),selected:option.selected===true}));
@@ -185,8 +189,9 @@ class BrowserBridge {
     const snapshot=randomUUID();
     for(const [key,value] of this.pageSnapshots)if(Date.now()-value.created>SNAPSHOT_TTL)this.pageSnapshots.delete(key);
     if(this.pageSnapshots.size>=64)this.pageSnapshots.delete(this.pageSnapshots.keys().next().value);
-    const observation={status:'observed',source:'browser_dom',snapshot,browser:client.browser,session_id:client.sessionId,tab_id:tab.id,window_id:tab.windowId,url:safeURL(frame.url),document_id:frame.document_id,complete:frame.complete,controls,revision:frame.revision,top_frame_only:true,has_iframes:frame.has_iframes===true,untrusted_page_data:true};
-    this.pageSnapshots.set(snapshot,{client,sessionId:client.sessionId,created:Date.now(),tab:{...tab,url:frame.url},frame:{snapshot:frame.snapshot,document_id:frame.document_id},observation});
+    const frames=Array.isArray(frame.frames)?frame.frames.filter(f=>Number.isSafeInteger(f?.frame_id)&&f.frame_id>0&&typeof f.browser_document_id==='string'&&f.browser_document_id.length<=160&&typeof f.url==='string'&&f.url.length<=8192&&/^https?:/.test(f.url)).slice(0,16):[];
+    const observation={...(frameTarget?{frame_id:frameTarget.frame_id,frame_url:safeURL(frame.url)}:{}),...(frames.length?{frames:frames.map(f=>({frame_id:f.frame_id,url:safeURL(f.url),title:String(f.title||'').slice(0,200)}))}:{}),status:'observed',source:'browser_dom',snapshot,browser:client.browser,session_id:client.sessionId,profile_revision:profileRevision(client),tab_id:tab.id,window_id:tab.windowId,url:safeURL(frameTarget?tab.url:frame.url),document_id:frame.document_id,complete:frame.complete,controls,revision:frame.revision,top_frame_only:true,has_iframes:frame.has_iframes===true,untrusted_page_data:true};
+    this.pageSnapshots.set(snapshot,{client,sessionId:client.sessionId,created:Date.now(),tab:{...tab,url:frameTarget?tab.url:frame.url},frames,frameTarget,frame:{snapshot:frame.snapshot,document_id:frame.document_id},observation});
     return observation;
   }
   pageReady(client,tab,context){
@@ -197,46 +202,53 @@ class BrowserBridge {
     const blocked=this.uncertain.get(context.activityScope??this.defaultScope);
     if(blocked?.has(`page:${client.browser}:${client.clientId}:${tab.id}`))throw fault('browser_outcome_unknown','A page action has an unknown outcome. Do not repeat it in this task.');
   }
-  async observePage({snapshot,tab_id,selector},context={}){
-    check(context);const entry=this.snapshots.get(snapshot);
+  async observePage({snapshot,tab_id,selector,frame_id},context={}){
+    // A fresh page receipt already binds this exact tab and profile. Accept it
+    // for read-only refresh instead of requiring another tab-inventory round trip.
+    check(context);const entry=this.snapshots.get(snapshot)||this.pageSnapshots.get(snapshot);
     if(!entry||Date.now()-entry.created>SNAPSHOT_TTL||!this.clients.has(entry.client)||entry.sessionId!==entry.client.sessionId)throw fault('stale_browser_snapshot','Read the browser tabs again before inspecting a page.');
-    const tab=entry.tabs.get(tab_id),client=entry.client;
+    const tab=entry.tabs?entry.tabs.get(tab_id):entry.tab?.id===tab_id?entry.tab:null,client=entry.client;
     if(!tab||tab.pendingUrl||!/^https?:/.test(tab.url))throw fault('invalid_page_target','Select an observed ordinary HTTP or HTTPS tab that has finished navigating.');
     // Read-only inspection is allowed even after an uncertain action.
     if(!client.pages)throw fault('page_adapter_unavailable','Reload the Mitch Browser Bridge extension to enable page controls.');
     if([...this.pending.values()].some(request=>request.client===client&&request.mutation))throw fault('browser_busy','Wait for the current browser operation to finish.');
     if(selector)validatePlan({steps:[{op:'assert',target:selector}],completion:[{target:selector}]});
-    const epoch=client.epoch,result=await this.request(client,'page.observe',{expectedTab:{id:tab.id,windowId:tab.windowId,url:tab.url,pinned:tab.pinned},...(selector?{selector}:{})},context);
+    const chosenFrame=frame_id??entry.frameTarget?.frame_id??0;
+    const frameTarget=chosenFrame===0?undefined:entry.frames?.find(f=>f.frame_id===chosenFrame)||(entry.frameTarget?.frame_id===chosenFrame?entry.frameTarget:undefined);
+    if(chosenFrame!==0&&!frameTarget)throw fault('unobserved_frame','Read the outer page and choose an observed frame_id.');
+    const epoch=client.epoch,result=await this.request(client,'page.observe',{...(frameTarget?{expectedFrame:frameTarget}:{}),expectedTab:{id:tab.id,windowId:tab.windowId,url:tab.url,pinned:tab.pinned},...(selector?{selector}:{})},context);
     check(context);
     if(epoch!==client.epoch||!this.clients.has(client))throw fault('stale_browser_session','The browser changed during inspection.');
     if(result?.status==='refused')return {status:'refused',action_attempted:false,code:result.code,message:String(result.message||'Page access is unavailable.').slice(0,500)};
-    return this.pageFrame(client,tab,result);
+    return this.pageFrame(client,tab,result,frameTarget);
   }
   async executePagePlan({snapshot,steps,completion},context={}){
     check(context);const plan=validatePlan({steps,completion}),entry=this.pageSnapshots.get(snapshot);
     if(!entry||Date.now()-entry.created>SNAPSHOT_TTL||!this.clients.has(entry.client)||entry.sessionId!==entry.client.sessionId)throw fault('stale_page_snapshot','Read this page again before planning actions.');
-    const {client,tab,frame}=entry;this.pageReady(client,tab,context);
+    const {client,tab,frame,frameTarget}=entry;this.pageReady(client,tab,context);
+    if(!await approveActions(plan.steps,this.confirm,context))return {status:'refused',verified:false,action_attempted:false,stop_task:true,code:'confirmation_required',message:'The sensitive action was not approved. No input was sent.'};
+    this.pageReady(client,tab,context);
     const scope=context.activityScope??this.defaultScope,binding=JSON.stringify([client.browser,client.clientId,tab.id]);
     const delivered=this.partialPlans.get(scope)?.get(binding)||[];
     const activation=step=>['click','follow_link'].includes(step.op)||(step.op==='press'&&step.key==='Enter');
-    const replays=plan.steps.some(step=>delivered.some(previous=>matchControls([{name:previous.target.name,role:previous.target.role}],step.target).length===1&&((activation(step)&&activation(previous))||(step.op===previous.op&&step.text===previous.text&&step.value===previous.value&&step.key===previous.key))));
+    const replays=plan.steps.some(step=>delivered.some(previous=>matchControls([previous.target],step.target).length===1&&((activation(step)&&activation(previous))||(step.op===previous.op&&step.text===previous.text&&step.value===previous.value&&step.key===previous.key))));
     if(replays)return {status:'refused',verified:false,action_attempted:false,input_suppressed:true,recovery_required:true,code:'delivered_step_replay',message:'That control already received this input in the interrupted plan. Continue from the returned page controls without repeating the delivered steps.',observation:entry.observation};
     for(const [key,value] of this.pageSnapshots)if(value.client===client&&value.tab.id===tab.id)this.pageSnapshots.delete(key);
     const uncertain=(source,recovered)=>{this.markUncertain(client,[tab],context);this.uncertain.get(scope).add(`page:${client.browser}:${client.clientId}:${tab.id}`);const reason=toolDiagnostics({reason:source?.reason||source?.code}).reason;return {status:'interrupted',verified:false,action_attempted:true,outcome_unknown:true,reason:'page_outcome_unknown',...(reason?{source_reason:reason}:{}),...(recovered?{read_only_recovery:true,recovery_required:true,observation:recovered}:{}),message:recovered?'Input may have navigated the page. The attached state is a fresh read-only observation. Check whether the original task is complete; do not send or repeat input.':'The page plan was issued but its result is unknown. Inspect the page; do not repeat its actions.'};};
     let result;
-    try{result=await this.request(client,'page.plan',{expectedTab:{id:tab.id,windowId:tab.windowId,url:tab.url,pinned:tab.pinned},snapshot:frame.snapshot,...plan},context,true,30000);}catch(error){if(error.action_attempted)return uncertain(error);throw error;}
+    try{result=await this.request(client,'page.plan',{...(frameTarget?{expectedFrame:frameTarget}:{}),expectedTab:{id:tab.id,windowId:tab.windowId,url:tab.url,pinned:tab.pinned},snapshot:frame.snapshot,...plan},context,true,30000);}catch(error){if(error.action_attempted)return uncertain(error);throw error;}
     if(result?.status==='refused'&&result.action_attempted===false&&!result.outcome_unknown)return result;
-    if(result?.outcome_unknown){let recovered;if(result.recovery_kind==='read_only_after_input'&&result.observation)try{recovered=this.pageFrame(client,tab,result.observation);}catch{}return uncertain(result,recovered);}
+    if(result?.outcome_unknown){let recovered;if(result.recovery_kind==='read_only_after_input'&&result.observation)try{recovered=this.pageFrame(client,tab,result.observation,frameTarget);}catch{}return uncertain(result,recovered);}
     if(!result||!['completed','interrupted'].includes(result.status)||!Number.isInteger(result.attempted)||result.attempted<0||result.attempted>plan.steps.length||!Number.isInteger(result.completed)||result.completed<0||result.completed>plan.steps.length||!Array.isArray(result.steps)||result.steps.length>plan.steps.length)return uncertain();
     let observation,proofs=[];
-    try{if(result.observation){if(result.observation.document_id!==frame.document_id)throw Error('Document changed');observation=this.pageFrame(client,tab,result.observation);}}catch{return uncertain();}
+    try{if(result.observation){if(result.observation.document_id!==frame.document_id)throw Error('Document changed');observation=this.pageFrame(client,tab,result.observation,frameTarget);}}catch{return uncertain();}
     let validProofs=false;
     if(result.status==='completed')try{
       if(!Array.isArray(result.completion)||result.completion.length!==plan.completion.length)throw Error('Missing completion proof');
       proofs=result.completion.map((proof,index)=>{
         const expected=plan.completion[index];
         if(proof.passed!==true||proof.condition!==expected.condition||proof.value!==expected.value||JSON.stringify(proof.target)!==JSON.stringify(expected.target)||proof.observation?.document_id!==frame.document_id)throw Error('Mismatched completion proof');
-        const observed=this.pageFrame(client,tab,proof.observation);
+        const observed=this.pageFrame(client,tab,proof.observation,frameTarget);
         if(observed.complete!==true||!testCondition(observed,expected))throw Error('Unsupported completion claim');
         return {...expected,passed:true,observation:observed};
       });validProofs=true;
@@ -251,8 +263,8 @@ class BrowserBridge {
       const indices=new Set();
       acknowledged=result.delivered_steps.map(step=>{
         const expected=plan.steps[step.index],record=result.steps[step.index];
-        if(!Number.isInteger(step.index)||indices.has(step.index)||!expected||!record||['wait','assert'].includes(step.op)||step.op!==expected.op||record.index!==step.index||record.op!==step.op||record.known_delivery!==true||typeof step.target?.name!=='string'||typeof step.target?.role!=='string'||step.target.name.length>1000||step.target.role.length>100||step.target.match!=='exact'||JSON.stringify(record.resolved_target)!==JSON.stringify(step.target)||matchControls([{name:step.target.name,role:step.target.role}],expected.target).length!==1||['text','value','key'].some(key=>step[key]!==expected[key]))throw Error('Mismatched acknowledged delivery');
-        indices.add(step.index);return {index:step.index,op:expected.op,target:{name:step.target.name,role:normalizeRole(step.target.role),match:'exact'},...(expected.text!==undefined?{text:expected.text}:{}),...(expected.value!==undefined?{value:expected.value}:{}),...(expected.key!==undefined?{key:expected.key}:{})};
+        if(!Number.isInteger(step.index)||indices.has(step.index)||!expected||!record||['wait','assert'].includes(step.op)||step.op!==expected.op||record.index!==step.index||record.op!==step.op||record.known_delivery!==true||typeof step.target?.name!=='string'||typeof step.target?.role!=='string'||step.target.name.length>1000||step.target.role.length>100||step.target.match!=='exact'||JSON.stringify(record.resolved_target)!==JSON.stringify(step.target)||matchControls([step.target],expected.target).length!==1||['text','value','key'].some(key=>step[key]!==expected[key]))throw Error('Mismatched acknowledged delivery');
+        indices.add(step.index);return {index:step.index,op:expected.op,target:{name:step.target.name,role:normalizeRole(step.target.role),match:'exact',...(step.target.ancestors?.length?{ancestors:step.target.ancestors}:{})},...(expected.text!==undefined?{text:expected.text}:{}),...(expected.value!==undefined?{value:expected.value}:{}),...(expected.key!==undefined?{key:expected.key}:{})};
       });
       const known=result.steps.filter(step=>step.known_delivery===true);
       if(known.length!==indices.size||known.some(step=>!indices.has(step.index))||result.steps.some(step=>!['wait','assert'].includes(step.op)&&step.status==='delivered'&&step.known_delivery!==true))throw Error('Incomplete delivered prefix');
@@ -293,8 +305,11 @@ class BrowserBridge {
     check(context);const validated=validatePlan({steps:[{op:'assert',target}],completion}),entry=this.pageSnapshots.get(snapshot);
     if(!entry||Date.now()-entry.created>SNAPSHOT_TTL||!this.clients.has(entry.client)||entry.sessionId!==entry.client.sessionId)throw fault('stale_page_snapshot','Read this page again before following a link.');
     const {client,tab,frame}=entry;this.pageReady(client,tab,context);
+    if(entry.frameTarget)throw fault('unsupported_frame_navigation','Inspect and navigate the outer page explicitly. Embedded frame link navigation is not supported.');
     if(!client.pageNavigation)throw fault('page_adapter_update_required','Reload the Mitch Browser Bridge extension and refresh this tab before using direct link navigation.');
     target=validated.steps[0].target;completion=validated.completion;
+    if(!await approveActions([{op:'follow_link',target}],this.confirm,context))return {status:'refused',stop_task:true,verified:false,action_attempted:false,code:'confirmation_required'};
+    this.pageReady(client,tab,context);
     const scope=context.activityScope??this.defaultScope,binding=JSON.stringify([client.browser,client.clientId,tab.id]),delivered=this.partialPlans.get(scope)?.get(binding)||[];
     if(delivered.some(previous=>(['click','follow_link'].includes(previous.op)||previous.op==='press'&&previous.key==='Enter')&&matchControls([previous.target],target).length===1))return {status:'refused',verified:false,action_attempted:false,input_suppressed:true,recovery_required:true,code:'delivered_step_replay',observation:entry.observation};
     for(const [key,value] of this.pageSnapshots)if(value.client===client&&value.tab.id===tab.id)this.pageSnapshots.delete(key);
@@ -328,6 +343,24 @@ class BrowserBridge {
       // Raw hrefs stay inside the bridge; they may contain private query data.
       return {status:verified?'completed':'interrupted',verified,attempted:1,completed:verified?1:0,action_attempted:true,input_delivered:true,navigation:{accepted:true,source_document_id:frame.document_id,document_id:observation.document_id,url:safeURL(receipt.final_url)},steps:result.steps,delivered_steps:[acknowledged],completion:proofs,observation,...(!verified?{recovery_required:true,reason:'completion_not_met',message:'Navigation was delivered. Continue from the fresh controls without following the same link again.'}:{})};
     }catch{return uncertain(result);}
+  }
+  async runSiteTask({snapshot,...supplied},context={}){
+    check(context);const goal=publicSites.validate(supplied),entry=this.snapshots.get(snapshot);
+    if(!entry||Date.now()-entry.created>SNAPSHOT_TTL||!this.clients.has(entry.client)||entry.sessionId!==entry.client.sessionId)throw fault('stale_browser_snapshot','Read this browser profile before starting the task.');
+    const client=entry.client,scope=context.activityScope??this.defaultScope,key=`site:${client.browser}:${client.clientId}`;
+    if(goal.browser&&goal.browser!==client.browser)throw fault('wrong_browser','The selected browser does not match the request.');
+    if(!client.publicSites)return {status:'refused',action_attempted:false,verified:false,code:'page_adapter_update_required',message:'Reload the updated Mitch Browser Bridge extension.'};
+    if(this.uncertain.get(scope)?.has(key))throw fault('browser_outcome_unknown','A previous website task has an unknown outcome. Do not repeat it.');
+    if([...this.pending.values()].some(p=>p.client===client&&p.mutation))throw fault('browser_busy','A browser action is still in progress.');
+    const tabs=[...entry.tabs.values()],windowIds=[...new Set(tabs.map(t=>t.windowId))],matches=tabs.filter(t=>!t.pinned&&!t.pendingUrl&&publicSites.permittedURL(goal.site,t.url)),active=matches.filter(t=>t.active),selected=active.length===1?active[0]:matches.length===1?matches[0]:null;
+    if(!windowIds.length)throw fault('invalid_browser_window','Open one normal browser window first.');
+    const expectedTab=selected?{id:selected.id,windowId:selected.windowId,url:selected.url,pinned:false}:undefined;
+    const uncertain=result=>{this.markUncertain(client,selected?[selected]:[],context);this.uncertain.get(scope).add(key);return {...result,status:'interrupted',verified:false,action_attempted:true,outcome_unknown:true};};
+    this.invalidate(client);let result;
+    try{result=await this.request(client,'site.task',{goal,windowIds,...(expectedTab?{expectedTab}:{})},context,true,goal.action==='play'?45000:30000);}catch(error){if(error.action_attempted)return uncertain({message:'The website task did not return a verified result. I stopped without repeating it.'});throw error;}
+    if(result?.status==='refused'&&result.action_attempted===false&&!result.outcome_unknown)return result;
+    if(!this.clients.has(client)||!integer(result?.tab_id)||!windowIds.includes(result?.window_id)||selected&&result.tab_id!==selected.id||!publicSites.verify(goal,result))return uncertain(result||{});
+    return result;
   }
   async stop(){
     this.started=false;clearInterval(this.heartbeat);

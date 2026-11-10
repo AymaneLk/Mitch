@@ -2,6 +2,11 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {AI}=require('../ai');
 const {WORKFLOW_TOOL}=require('../workflow-assistant');
+test('scope-first requests prepare and reuse controls just like verb-first commands',()=>{
+  const {desktopRequest}=require('../workflow-assistant');
+  for(const text of ['In "Example", set "Name" to "Alpha"','In Example, open Settings','On "example.test" fill "Search" with "Alpha"'])assert.equal(desktopRequest(text),true,text);
+  for(const text of ['In my opinion, this is a good app','On Monday, what happened?'])assert.equal(desktopRequest(text),false,text);
+});
 const clone=value=>JSON.parse(JSON.stringify(value));
 const target={kind:'browser',hostname:'example.test',browser:'opera'};
 const search={name:'Search',role:'textbox',match:'exact'};
@@ -20,7 +25,7 @@ const reviewed=(decision='complete',answer='Found the requested item.',reason='T
 const completed=value=>({status:'completed',verified:true,action_attempted:true,observation:context(value,'finished').scopes[0].observation});
 function harness({responses=[planned(),reviewed()],settings={},preparedContext=context(),dispatch}={}){
   const requests=[],actions=[],preparations=[];
-  const config={chatProvider:'deepseek',allowDesktop:true,allowScreen:true,workflowEngine:true,speculativePlanning:true,reuseWorkflows:true,chatModel:'test',...settings};
+  const config={chatProvider:'chatgpt',allowDesktop:true,allowScreen:true,workflowEngine:true,speculativePlanning:true,reuseWorkflows:true,chatModel:'test',...settings};
   const ai=new AI(()=>config,()=>assert.fail('No key retrieval'),async(name,args,execution)=>{
     actions.push({name,args:clone(args),execution});
     const value=args.steps?.find(step=>step.op==='act')?.steps.find(step=>step.op==='fill')?.text;
@@ -42,7 +47,7 @@ test('cold workflow is independently reviewed then reused with fresh IDs and quo
   const h=harness();assert.equal(await h.ai.chat(request),'Found the requested item.');
   assert.equal(h.requests.length,2);assert.equal(h.ai.procedures.size,1);
   assert.ok(h.requests[0].tools.some(tool=>tool.name===WORKFLOW_TOOL));
-  assert.equal(h.requests[0].localThinking,false,'Only the bounded structured planner uses quick mode');
+  assert.equal(h.requests[0].localThinking,undefined,'ChatGPT never receives an invented reasoning setting');
   assert.equal(h.requests[0].tools.some(tool=>tool.name==='browser_execute_plan'),false);
   assert.equal(h.requests[1].tools,undefined);assert.equal(h.requests[1].response_format.json_schema.name,'desktop_completion');
   assert.notEqual(h.requests[1].localThinking,false,'Independent completion review keeps the normal thinking setting');
@@ -125,4 +130,51 @@ test('fresh replay mismatch with no input falls back to planning and independent
   assert.equal(await h.ai.chat(request),'Found the requested item.');
   assert.equal(h.actions.length,2);assert.ok(h.actions[0].execution.workflowReplay);assert.equal(h.actions[1].execution.workflowReplay,undefined);
   assert.equal(h.requests.length,2);assert.equal(h.ai.lastTaskTiming.route,'workflow');
+});
+
+test('independent goal compilation overlaps planning and skips serial review only after full proof',async()=>{
+ const ctx=context();ctx.scopes[0].observation.window_id=4;
+ const h=harness({preparedContext:ctx,settings:{parallelGoalVerification:true},dispatch:()=>{const o=completed('Alpha');Object.assign(o.observation,{session_id:'session-initial',window_id:4});return o;}});
+ let compilerStarted=false,plannerStarted=false,release;
+ h.ai.request=async(_endpoint,body)=>{
+  h.requests.push(body);
+  if(body.response_format?.json_schema?.name==='independent_task_goal'){
+   compilerStarted=true;await new Promise(r=>{release=r;});assert.ok(plannerStarted);return {output:[{content:[{type:'output_text',text:JSON.stringify({verifiable:true,requirements:[{scope:0,name:'Search',role:'textbox',condition:'value',value:'Alpha',source_scope:-1,source_name:'',source_attribute:'none'}]})}]}]};
+  }
+  plannerStarted=true;assert.ok(compilerStarted);assert.equal(JSON.stringify(body).includes('independent_task_goal'),false);release();return planned();
+ };
+ assert.equal(await h.ai.chat(request),'Done. I verified all the requested changes.');assert.equal(h.requests.length,2);assert.equal(h.actions.length,1);assert.equal(h.ai.lastTaskTiming.parallelGoalVerified,true);
+});
+
+test('declined independent contracts retain semantic review and cancellation cannot hang',async()=>{
+ for(const cancel of [false,true]){
+  const ctx=context();ctx.scopes[0].observation.window_id=4;
+  const h=harness({preparedContext:ctx,settings:{parallelGoalVerification:true}});let calls=0;
+  h.ai.request=async(_e,body)=>{
+   if(body.response_format?.json_schema?.name==='independent_task_goal')return cancel?new Promise(()=>{}):{output:[{content:[{type:'output_text',text:'{"verifiable":false,"requirements":[]}'}]}]};
+   if(cancel){h.ai.controller.abort(Error('Stop'));throw Error('Stop');}
+   return calls++===0?planned():reviewed();
+  };
+  if(cancel)await assert.rejects(h.ai.chat(request),/Stop/);else {assert.equal(await h.ai.chat(request),'Found the requested item.');assert.equal(calls,2);}
+  assert.equal(h.ai.busy,false);assert.notEqual(h.ai.lastTaskTiming.parallelGoalVerified,true);
+ }
+});
+
+test('a known navigation assertion miss refreshes the bound tab before reviewing, without actor rediscovery',async()=>{
+ const f={...context().scopes[0].observation,window_id:4},fresh={...f,snapshot:'new-state',document_id:'new-document',url:'https://example.test/received'};
+ const h=harness({dispatch:name=>{
+  if(name===WORKFLOW_TOOL)return {status:'interrupted',verified:false,reason:'completion_unmet',recovery_required:true,observation:f};
+  if(name==='browser_list_tabs')return {status:'ok',complete:true,snapshot:'inventory',browser:'opera',session_id:f.session_id,tabs:[{tab_id:7,window_id:4,url:fresh.url,pinned:false}]};
+  assert.equal(name,'browser_read_page');return fresh;
+ }});
+ assert.equal(await h.ai.chat(request),'Found the requested item.');assert.equal(h.requests.length,2);
+ assert.deepEqual(h.actions.map(a=>a.name),[WORKFLOW_TOOL,'browser_list_tabs','browser_read_page']);
+ assert.ok(JSON.stringify(h.requests[1].input).includes('new-document'));
+});
+
+test('a compiler refusal may be repaired once, but delivered or uncertain workflows cannot restart',async()=>{
+ for(const mode of ['validation','delivered']){
+  let calls=0;const f=harness({responses:[planned(),planned(),reviewed()],dispatch:async()=>{calls++;return calls===1?mode==='validation'?{status:'error',validation_failed:true,refused:true,action_attempted:false,message:'Invalid program'}:{status:'interrupted',action_attempted:true,outcome_unknown:true}:completed('Alpha');}});
+  await f.ai.chat(request);assert.equal(calls,mode==='validation'?2:1);
+ }
 });

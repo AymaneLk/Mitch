@@ -3,6 +3,7 @@
 const {createTaskProgramHost}=require('./task-program-host');
 const {executeTaskProgram,validateTaskProgram}=require('./task-program');
 const {scopeSignature}=require('./procedure-memory');
+const {optimizeWorkflow}=require('./workflow-optimize');
 const MAX_EVIDENCE_BYTES=120000;
 const READ_ONLY=new Set(['computer_list_windows','computer_inspect_window','browser_list_tabs','browser_read_page','list_apps']);
 const INPUT=new Set(['open_app','computer_restore_window','computer_focus_window','computer_execute_plan','browser_execute_plan','browser_follow_link','browser_open_tab']);
@@ -84,7 +85,7 @@ function compactEvidence(result,events){
  * including restore/launch/focus. Prefetched context is never replay authority.
  */
 async function runGuardedTaskProgram({program,bindings={},dispatch,context={},initialContext,replay}={}){
-  const started=performance.now(),events=[],calls=[];let allowed=!replay,replayBound=false,result,host;
+  const started=performance.now(),events=[],calls=[];let allowed=!replay,replayBound=false,result,host,mergedPhases=0;
   const check=()=>{context.signal?.throwIfAborted();context.assertActive?.();if(context.isCancelled?.())throw refused('cancelled','The task was cancelled.');};
   const call=async(name,args,ctx)=>{
     check();if(replay&&!allowed&&!READ_ONLY.has(name))throw refused('replay_context_mismatch','The cached scope must be verified before any input.');
@@ -96,6 +97,9 @@ async function runGuardedTaskProgram({program,bindings={},dispatch,context={},in
   };
   try{
     check();program=validateTaskProgram(program,bindings);if(typeof dispatch!=='function')throw refused('invalid_host','A guarded dispatcher is required.');
+    // Repaired procedures compare the original receipts, so record optimization
+    // explicitly and keep replay programs unchanged.
+    if(!replay){const optimized=optimizeWorkflow(program,bindings);program=optimized.program;mergedPhases=optimized.mergedPhases;}
     let expected;
     if(replay){
       const targets=bindsIn(program),signatures=replay.scopeSignatures;
@@ -120,6 +124,6 @@ async function runGuardedTaskProgram({program,bindings={},dispatch,context={},in
   if(replay&&!attempted&&!replayBound&&!['cancelled','invalid_program'].includes(result.reason))result.reason='replay_context_mismatch';
   if(!attempted&&result.reason==='replay_context_mismatch'){delete result.outcome_unknown;delete result.recovery_required;result.cold_plan_required=true;}
   if(attempted&&result.status!=='completed'&&!result.outcome_unknown)result.recovery_required=true;
-  return compactEvidence(result,events);
+  return compactEvidence({...result,merged_phases:mergedPhases},events);
 }
 module.exports={runGuardedTaskProgram,compactEvidence,MAX_EVIDENCE_BYTES};

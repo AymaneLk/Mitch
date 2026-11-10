@@ -1,0 +1,27 @@
+'use strict';
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const {protectedStorage}=require('../chatgpt-storage');
+module.exports=async({main,store,ai,chatgptAuth,safeStorage,directory})=>{
+  const evaluate=code=>main.webContents.executeJavaScript(code);
+  await evaluate("go('settings');loadState()");
+  assert.equal(await evaluate("document.getElementById('chatgptSignIn').textContent"),'Continue with ChatGPT');
+  assert.equal(await evaluate("getComputedStyle(document.getElementById('chatgptEnablePlan')).display"),'none');
+  assert.equal(await evaluate("document.querySelectorAll('#deepseekSettings, #deepseekKey, #apiKey').length"),0);
+  const initial=await evaluate('window.companion.state()');assert.equal(initial.settings.transcriptionProvider,'local');assert.equal(initial.chatgpt.connected,false);
+  const storage=protectedStorage(path.join(directory,'chatgpt-encryption-smoke'),safeStorage),synthetic={accessToken:'synthetic-test-token',refreshToken:'synthetic-refresh-token'};
+  await storage.write(synthetic);assert.deepEqual(await storage.read(),synthetic);
+  assert.equal(fs.readFileSync(path.join(directory,'chatgpt-encryption-smoke','chatgpt-auth.json'),'utf8').includes('synthetic-test-token'),false);
+  ai.history=[{role:'user',content:'Old context'}];await evaluate('window.companion.saveSettings('+JSON.stringify({...initial.settings,chatProvider:'chatgpt',wakeEnabled:false})+')');assert.equal(ai.history.length,0);assert.equal(store.data.settings.chatProvider,'chatgpt');
+  await assert.rejects(evaluate("window.companion.chat('Hello')"),/Continue with ChatGPT/);
+  assert.equal(chatgptAuth.publicState().connected,false);
+  assert.equal(await evaluate("typeof window.companion.chatgptSignIn"),'function');
+  assert.equal(await evaluate("typeof window.companion.testDeepSeek"),'undefined');
+  const display={status:'connected',message:'',activeId:'synthetic-account',connected:true,planUsage:true,accounts:[{id:'synthetic-account',label:'Connection 1 · test@example.invalid',email:'test@example.invalid',connected:true}],models:[{id:'example-model',name:'Example authorized model'}],selectedModel:'example-model',mode:'fast',transport:'http'};
+  await evaluate('renderChatGPT('+JSON.stringify(display)+')');assert.equal(await evaluate("document.getElementById('chatgptModel').selectedOptions[0].textContent"),'Example authorized model');assert.equal(await evaluate("document.getElementById('chatgptDisconnect').hidden"),false);
+  await evaluate('renderChatGPT('+JSON.stringify(chatgptAuth.publicState())+')');
+  const publicState=JSON.stringify(await evaluate('window.companion.state()'));assert.equal(/accessToken|refreshToken|clientId|hostId|synthetic-test-token/.test(publicState),false);
+  await evaluate("document.getElementById('chatgptSettings').scrollIntoView({block:'start'});document.fonts.ready");
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  fs.writeFileSync(path.join(directory,'chatgpt-settings.png'),(await main.webContents.capturePage()).toPNG());
+  fs.writeFileSync(path.join(directory,'chatgpt-settings-result.json'),JSON.stringify({status:'passed',version:initial.version,checks:['OAuth controls','dynamic model picker','isolated Windows encryption round trip','provider selection','history reset','no token IPC exposure','missing session blocks inference','local voice preserved'],liveOAuth:false},null,2));
+};

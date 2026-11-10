@@ -6,6 +6,10 @@ const {controlState}=require('./desktop-state');
 const NAVIGATION_KEYS = new Set(['Return', 'Tab', 'Escape', 'Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown', 'Backspace', 'Delete']);
 const SNAPSHOT_TTL = 90000;
 const MAX_CONTROLS = 300;
+// The driver's idle lease is five minutes. Reassert our named session after a
+// short idle gap, without a timer or a lifecycle round trip for every click.
+const SESSION_REFRESH_MS = 30000;
+const SESSION_READS = new Set(['list_windows','get_window_state','get_desktop_state','get_screen_size']);
 const NON_EDITABLE_MESSAGE = 'This control is read-only or not an editable text field. Use a control marked editable, or click observed input buttons. In Calculator, click the digit/operator buttons instead of typing into the display.';
 
 function decode(result) {
@@ -19,6 +23,9 @@ function decode(result) {
     try { data = JSON.parse(text); } catch { data = { message: text }; }
   }
   if (result.isError || result.is_error || data.isError || data.is_error || data.effect === 'refused' || ['error', 'refused'].includes(data.status) || data.refusal) {
+    // This exact driver diagnostic describes a pre-write capability check.
+    // Other tool_invocation_failed errors remain delivery-unknown.
+    if(result.isError===true&&data.code==='tool_invocation_failed'&&result.content?.length===1&&result.content[0].type==='text'&&/^set_value: element \[\d+\] does not implement ValuePattern or RangeValuePattern\. For controls with TogglePattern \(CheckBox\) or SelectionItemPattern \(RadioButton \/ ComboBoxItem\), use the `click` tool instead\.$/.test(result.content[0].text))throw Object.assign(Error('This control has no UIA value-writing pattern.'),{code:'unsupported_value_pattern',refused:true,action_attempted:false});
     const details=nativeErrorDetails(result,data,'Cua refused this operation.');
     const error = new Error(details.message);
     error.code = details.code;
@@ -47,32 +54,40 @@ function textControl(element) {
   return ['editable','is_editable','isEditable','writable','is_writable','isWritable'].some(key=>element[key]===true) || /edit|text.?field|text.?box|text.?area|document/i.test(role);
 }
 
-function publicControl(element, index) {
+function publicControl(element, index, elements = []) {
   const protectedValue = protectedControl(element);
+  const ancestors=[],seen=new Set([element]),byIndex=new Map(elements.map((e,i)=>[e.element_index??i,e]));
+  let parent=byIndex.get(element.parent_index);
+  while(parent&&!seen.has(parent)&&ancestors.length<8){seen.add(parent);const name=String(parent.label??parent.name??'').slice(0,300),role=String(parent.role??parent.type??'').slice(0,60);if(name&&role)ancestors.push({name,role});parent=byIndex.get(parent.parent_index);}
   return {
     control_id: String(index),
+    ...(ancestors.length?{ancestors}:{}),
     name: String(element.label ?? element.name ?? '').slice(0, 1000),
     type: String(element.role ?? element.type ?? '').slice(0, 100),
     enabled: element.enabled !== false,
     protected: protectedValue,
     editable: !protectedValue && element.enabled !== false && textControl(element),
+    ...(typeof element.selected === 'boolean' ? {selected:element.selected} : {}),
+    ...(typeof element.checked === 'boolean' ? {checked:element.checked} : /^(?:ControlType\.)?CheckBox$/i.test(element.role||element.type||'') && typeof element.selected === 'boolean' ? {checked:element.selected} : {}),
     ...(protectedValue || element.value === undefined ? {} : { value: String(element.value).slice(0, 4000) }),
   };
 }
 
 /** App-owned accessibility controller. No model-provided scripts or raw tool forwarding. */
 class ComputerUse {
-  constructor({ client, getSettings, confirm, restoreWindow, now = Date.now }) {
+  constructor({ client, getSettings, confirm, restoreWindow, signals, now = Date.now }) {
     if (!client || typeof client.call !== 'function' || typeof client.stop !== 'function') throw new Error('A Cua client is required.');
     if (typeof getSettings !== 'function' || typeof confirm !== 'function') throw new Error('Settings and confirmation callbacks are required.');
     this.client = client;
     this.getSettings = getSettings;
     this.confirm = confirm;
     this.restoreWindow = restoreWindow;
+    this.signals=signals;
     this.now = now;
     this.paused = false;
     this.generation = 0;
     this.session = 'pixie-' + randomUUID();
+    this.sessionRevision = 0;
     this.snapshots = new Map();
     this.windows = new Map();
   }
@@ -84,29 +99,54 @@ class ComputerUse {
     if (!this.getSettings()?.allowDesktop) throw new Error('Enable desktop actions in Settings first.');
   }
 
-  async invoke(name, args, generation) {
+  invalidateSession() {
+    this.configuredSession = null;
+    this.sessionRevision++;
+    this.snapshots.clear();
+  }
+
+  async call(name, args, generation, beforeDispatch = () => {}) {
     this.assertReady(generation);
     await this.ensureSession(generation);
     this.assertReady(generation);
-    const result = await this.client.call(name, args);
-    this.assertReady(generation);
-    return decode(result);
+    for (let attempt=0;attempt<2;attempt++) {
+      try { beforeDispatch(); }
+      catch(error) { throw Object.assign(error,{refused:true,action_attempted:false}); }
+      const result = await this.client.call(name, {...args,session:this.session});
+      this.assertReady(generation);
+      try { decode(result); return result; }
+      catch (error) {
+        if(error.code!=='session_ended'||error.refused!==true)return result;
+        this.invalidateSession();
+        // A refused read can be repeated once. Never replay input or reuse a
+        // token/capture from the ended lease, even when delivery was refused.
+        if(attempt||!SESSION_READS.has(name))throw error;
+        await this.ensureSession(generation);
+        this.assertReady(generation);
+      }
+    }
+  }
+
+  async invoke(name, args, generation, beforeDispatch) {
+    return decode(await this.call(name,args,generation,beforeDispatch));
   }
 
   async ensureSession(generation) {
     await this.client.connect?.();
     this.assertReady(generation);
     const session = this.session, connectionId = this.client.connectionId;
-    const matches = value => value?.session === session && value.connectionId === connectionId;
-    if (matches(this.configuredSession)) return;
+    const matches = value => value?.session === session && value.connectionId === connectionId && value.generation === generation;
+    if (matches(this.configuredSession) && this.now()-this.configuredSession.checkedAt>=0 && this.now()-this.configuredSession.checkedAt<SESSION_REFRESH_MS) return;
     if (matches(this.sessionSetup)) return this.sessionSetup.promise;
-    const setup = {session,connectionId};
+    if(this.configuredSession && !matches(this.configuredSession))this.invalidateSession();
+    const setup = {session,connectionId,generation};
     setup.promise = (async()=>{
       // Configure only Pixie's session. Keep native effect verification and the
       // fresh observation; remove the driver's decorative cursor glide/dwell.
-      decode(await this.client.call('start_session',{session,cursor_motion:{timing:'fixed',glide_duration_ms:1,dwell_after_click_ms:0}}));
+      const result=decode(await this.client.call('start_session',{session,cursor_motion:{timing:'fixed',glide_duration_ms:1,dwell_after_click_ms:0}}));
       this.assertReady(generation);
-      this.configuredSession = {session,connectionId};
+      if(result.revived===true)this.invalidateSession();
+      this.configuredSession = {session,connectionId,generation,checkedAt:this.now()};
     })();
     this.sessionSetup = setup;
     try { await setup.promise; }
@@ -137,6 +177,7 @@ class ComputerUse {
     this.assertReady();
     const generation = this.generation;
     const identity = windowIdentity(args);
+    this.signals?.start();const stateStamp=this.signals?.stamp(identity);
     const key = `${identity.pid}:${identity.window_id}`;
     if (!this.windows.has(key)) throw new Error('List windows first and select an exact observed pid and window_id.');
     // A provider snapshot invalidates its earlier element tokens, including on failed reads.
@@ -150,7 +191,8 @@ class ComputerUse {
     const elements = result.elements.slice(0, MAX_CONTROLS);
     const controls = elements.map(publicControl);
     const snapshot = {
-      id: randomUUID(), key, window, created: this.now(), generation,
+      id: randomUUID(), key, window, created: this.now(), generation, connectionId:this.client.connectionId, sessionRevision:this.sessionRevision,
+      ...(this.signals?{stateStamp:this.signals.current(identity,stateStamp)?stateStamp:null}:{}),
       controls, elements,
       degraded: !!result.degraded, truncated: !!result.truncated || result.elements_complete === false || result.elements.length > MAX_CONTROLS,
       reason: String(result.degraded_reason ?? '').slice(0, 500),
@@ -275,7 +317,7 @@ class ComputerUse {
   getSnapshot(id, generation) {
     this.assertReady(generation);
     const snapshot = this.snapshots.get(id);
-    if (!snapshot || snapshot.generation !== generation || this.now() - snapshot.created > SNAPSHOT_TTL) {
+    if (!snapshot || snapshot.generation !== generation || snapshot.connectionId!==this.client.connectionId || snapshot.sessionRevision!==this.sessionRevision || this.now() - snapshot.created > SNAPSHOT_TTL) {
       throw new Error('Computer snapshot expired or was replaced. Inspect the window again.');
     }
     return snapshot;
@@ -333,7 +375,14 @@ class ComputerUse {
     if (allowed !== true) return { status: 'cancelled', verified: false, message: 'The user cancelled the action. Do not retry without a new request.' };
     let result;
     try {
-      result = await this.invoke(name, parameters, generation);
+      try{result = await this.invoke(name, parameters, generation,()=>{checkCaller();this.getSnapshot(args.snapshot,generation);});}
+      catch(error){
+        if(name!=='set_value'||error.code!=='unsupported_value_pattern'||error.refused!==true||typeof control?.value!=='string')throw error;
+        checkCaller();this.getSnapshot(args.snapshot,generation);
+        this.nativeText??=new (require('./native-text').NativeText)();
+        result=await this.nativeText.replace({pid:snapshot.window.pid,window_id:snapshot.window.window_id,name:control.name,before:control.value,text:args.text},{signal,assertActive:checkCaller});
+        if(result?.verified!==true||result.effect!=='confirmed')throw Object.assign(Error(result?.message||'Native text replacement could not be confirmed.'),{code:result?.code||'native_text_unconfirmed',refused:result?.refused===true});
+      }
       checkCaller();
     } catch (error) {
       this.snapshots.delete(snapshot.id);
@@ -346,7 +395,7 @@ class ComputerUse {
     // This confirms the individual input effect, never completion of the user's task.
     const requiresReview = !!((!['confirmed','unverifiable'].includes(result.effect)&&result.verified!==true) || result.error || result.escalation || result.escalation_reason || result.escalation_required || result.requires_escalation || result.refusal || result.degraded || result.truncated || result.partial || result.suspected_noop || ['partial','suspected_noop','refused'].includes(result.effect) || ['partial','error','refused','suspected_noop'].includes(result.status));
     let verified = !requiresReview && (result.effect === 'confirmed' || result.verified === true);
-    let verification = verified?'driver':undefined;
+    let verification = verified?(result.route==='system_api'?'native_api':'driver'):undefined;
     let observation;
     try { observation = await this.inspect(snapshot.window); }
     catch (error) {
@@ -365,6 +414,8 @@ class ComputerUse {
   }
 
   async stop() {
+    this.signals?.stop();
+    this.nativeText?.stop();
     this.paused = true;
     this.generation++;
     this.snapshots.clear();

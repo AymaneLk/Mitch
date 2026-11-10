@@ -2,7 +2,7 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {AI}=require('../ai');
 const {DesktopEvidence}=require('../desktop-evidence');
 const {validateTool}=require('../core');
-const settings=()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false});
+const settings=()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false});
 const before=()=>({status:'ok',snapshot:'tabs-before',session_id:'session',browser:'opera',complete:true,tabs:[
   {tab_id:1,window_id:1,url:'https://mail.google.com/mail/u/0/',title:'Gmail',pinned:false,active:true},
   {tab_id:2,window_id:1,url:'https://mail.google.com/mail/u/1/',title:'Gmail',pinned:false,active:false},

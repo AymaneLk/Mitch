@@ -1,0 +1,31 @@
+'use strict';
+const {Resources}=require('./benchmark-resources');const resources=new Resources();
+// Actual public Selenium demonstration forms; no site-specific action adapter.
+// CDP only resets test-owned tabs and independently reads the result.
+const fs=require('node:fs'),path=require('node:path'),{connect,app}=require('./chatgpt-benchmark-host'),{start,waitFor,ROOT,OUT}=require('./real-browser-lab');
+const baseline=process.argv.includes('--baseline')||process.argv.some(a=>/^--label=.*baseline$/.test(a)),label=process.argv.find(a=>a.startsWith('--label='))?.slice(8)||(baseline?'baseline':'optimized');
+if(!/^[a-z0-9-]+$/.test(label))throw Error('Invalid label');
+const source=process.env.MITCH_BENCHMARK_SOURCE|| (baseline?path.join(ROOT,'outputs/general-baseline-v25'):ROOT);
+const api={AI:require(path.join(source,'ai')).AI,dispatch:require(path.join(source,'core')).createDispatcher,prepare:require(path.join(source,'task-program-host')).prepareTaskContext,run:require(path.join(source,'task-program-runner')).runGuardedTaskProgram};
+const report={status:'running',baseline,model:null,version:require(path.join(source,'package.json')).version,method:'Real public Selenium forms, production Browser Bridge and selected GPT model. No website recipes, procedure cache, native inputs or screenshots. Independent DOM readback; full typed-request to verified reply, excluding browser/form setup and speech. Three tasks, six requests/task, twenty total. Synthetic values only, separate browser profile.',rows:[],requests:0};
+const file=path.join(OUT,'general-web-'+label+'.json'),save=()=>fs.writeFileSync(file,JSON.stringify(report,null,2));let host,lab,ai;
+const tasks=[
+ {id:'unfamiliar-fields',name:'Copper harbor',note:'Synthetic form test one',text:'In www.selenium.dev, set Text input to "Copper harbor" and Textarea to "Synthetic form test one". Leave the form open.'},
+ {id:'unfamiliar-states',name:'Birch valley',note:'Synthetic form test two',checked:true,text:'In www.selenium.dev, set Text input to "Birch valley", set Textarea to "Synthetic form test two", enable Default checkbox and keep Checked checkbox enabled. Leave the form open.'},
+ {id:'form-submit-transition',name:'Mitch synthetic test',note:'Public test fixture only',submit:true,text:'In www.selenium.dev, set Text input to "Mitch synthetic test", set Textarea to "Public test fixture only", click Submit and verify the form was received.'}
+];
+connect().then(async h=>{host=h;await resources.start();report.model=host.auth.model();lab=await start({source});
+ for(const task of tasks){if(process.env.MITCH_BENCH_TASKS&&!process.env.MITCH_BENCH_TASKS.split(',').includes(task.id))continue;const id=await lab.reset('https://www.selenium.dev/selenium/web/web-form.html');await waitFor(()=>lab.evaluate(id,'document.readyState==="complete"&&!!document.querySelector("textarea")'),20000,'Test form ready');
+  const row={task:task.id,text:task.text,requests:0,model:[],tools:[],verified:false};report.rows.push(row);const b=lab.bridge;
+  const handlers={browser_list_tabs:(a,c)=>b.list(a,c),browser_read_page:(a,c)=>b.observePage(a,c),browser_execute_plan:(a,c)=>b.executePagePlan(a,c),browser_follow_link:(a,c)=>b.followLink(a,c),computer_list_windows:async()=>({status:'ok',windows:[],degraded:false,truncated:false}),computer_run_workflow:(a,c)=>api.run({program:a,dispatch:c.dispatchChild,context:c})};
+  for(const [name,handler]of Object.entries(handlers))handlers[name]=async(a,c)=>{const start=performance.now();let result;try{return result=await handler(a,c);}finally{row.tools.push({name,args:a,ms:Math.round(performance.now()-start),result});save();}};
+  const dispatch=api.dispatch(handlers),settings={...host.settings,chatProvider:'chatgpt',chatModel:host.auth.model(),allowDesktop:true,allowScreen:false,workflowEngine:true,reuseWorkflows:false,speculativePlanning:false,parallelGoalVerification:require(path.join(source,'package.json')).version!=='0.6.0-local.25',localGrounding:false};
+  ai=new api.AI(()=>settings,()=>{throw Error('No key access');},dispatch,fetch,{request:async(body,options)=>{if(row.requests>=6||report.requests>=20)throw Error('Bounded request cap');row.requests++;report.requests++;const entry={kind:body.response_format?.json_schema?.name||'planner'};row.model.push(entry);const started=performance.now();try{return await host.provider.request({...body,...(body.tools?{tools:body.tools.filter(t=>Object.hasOwn(handlers,t.name))}:{})},options);}finally{entry.ms=Math.round(performance.now()-started);save();}}});
+  ai.prepareContext=(text,context)=>api.prepare({text,dispatch:dispatch.readOnly,context});ai.onTaskTiming=t=>row.timing=t;
+  const resourceStart=resources.begin(),started=performance.now(),timer=setTimeout(()=>ai.controller?.abort(),90000);try{row.reply=await ai.chat(task.text);row.status='returned';}catch(e){row.error=e.code||e.message;row.status='failed';}finally{clearTimeout(timer);row.totalMs=Math.round(performance.now()-started);row.resources=await resources.end(resourceStart);}
+  row.actual=await lab.evaluate(id,'({url:location.href,heading:document.querySelector("h1")?.textContent,receipt:document.querySelector("#message")?.textContent,name:document.querySelector("[name=my-text]")?.value,note:document.querySelector("textarea")?.value,checks:[...document.querySelectorAll("[type=checkbox]")].map(e=>e.checked)})');
+  const a=row.actual,u=new URL(a.url);row.verified=task.submit?u.pathname.endsWith('/submitted-form.html')&&u.searchParams.get('my-text')===task.name&&u.searchParams.get('my-textarea')===task.note&&a.receipt==='Received!':a.name===task.name&&a.note===task.note&&(!task.checked||a.checks.every(Boolean));
+  row.confirmed=row.verified&&row.status==='returned'&&!/^(I stopped|An action was sent|I couldn't|I could not)/.test(row.reply||'');save();console.log(JSON.stringify({task:task.id,baseline,ms:row.totalMs,requests:row.requests,verified:row.verified,confirmed:row.confirmed,error:row.error}));
+ }
+ report.status='completed';
+}).catch(e=>{report.status='failed';report.error=e.code||e.message;console.error(e.stack);}).finally(async()=>{await lab?.close();await resources.stop();host?.close();save();console.log(JSON.stringify({status:report.status,requests:report.requests,error:report.error}));app.exit(report.status==='completed'?0:1);});

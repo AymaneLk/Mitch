@@ -146,7 +146,7 @@ async function workerFixture(existing){
     setInterval:(callback,ms)=>{const id=++counter;timers.set(id,{callback,ms,interval:true});return id;},clearInterval:id=>timers.delete(id),
     setTimeout:(callback,ms)=>{const id=++counter;timers.set(id,{callback,ms});return id;},clearTimeout:id=>timers.delete(id),
   });
-  context.importScripts=()=>{context.MITCH_BROWSER_CONFIG={token:'test-token-'.repeat(8)};context.MitchTabOperations={createTabOperations:api=>createTabOperations(api,{now:()=>environment.state.now})};context.MitchPageOperations=require('../browser-extension/page-operations');};
+  context.importScripts=()=>{context.MITCH_BROWSER_CONFIG={token:'test-token-'.repeat(8)};context.MitchTabOperations={createTabOperations:api=>createTabOperations(api,{now:()=>environment.state.now})};context.MitchPageOperations=require('../browser-extension/page-operations');context.MitchPublicSites=require('../public-site-task');context.MitchSiteOperations=require('../browser-extension/site-operations');};
   vm.runInContext(fs.readFileSync(require.resolve('../browser-extension/worker.js'),'utf8'),context);
   await flush();const socket=connections[0];socket.open();socket.receive({type:'ready'});
   return {...environment,socket,connections,timers,listeners,context};

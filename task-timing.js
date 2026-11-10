@@ -10,7 +10,7 @@ const codes=new Set([
   'page_outcome_unknown','navigation_changed','stale_target','stale_snapshot','page_busy','page_error','page_operation_failed','unsupported_method','invalid_args','invalid_request','page_permission_required','unsupported_page','unsupported_window','invalid_reply','ledger_full','duplicate_request','page_adapter_unavailable','page_adapter_update_required','recovery_timeout','recovery_scope_changed','recovery_observation_failed','page_recovery_failed','stale_browser_snapshot','stale_page_snapshot','stale_browser_session','page_scope_changed','invalid_page_result','invalid_page_target',
   'ambiguous_browser','browser_busy','browser_cancelled','browser_disconnected','browser_outcome_unknown','browser_stopped','browser_timeout','browser_unavailable','invalid_browser_result','invalid_browser_targets','invalid_browser','browser_refused','invalid_result',
   'disabled_control','occluded_control','offscreen_control','protected_control','stale_control','focus_unconfirmed','target_changed','unknown_window','unsupported_key','unsupported_operation','unsupported_selection','unsupported_click','unsupported_fill','unsupported_select','focus_failed','option_missing','ambiguous_option',
-  'replay_context_mismatch','invalid_program','invalid_scope','incomplete_inventory','ambiguous_scope','evidence_limit','tool_invocation_failed','background_unavailable','stale_capture','stale_element','stale_element_token','target_not_found','permission_denied','invalid_tool_arguments','invalid_tool_json','tool_exception','delivered_step_replay','cross_route_replay_blocked','other',
+  'replay_context_mismatch','invalid_program','invalid_scope','incomplete_inventory','ambiguous_scope','evidence_limit','tool_invocation_failed','session_ended','background_unavailable','stale_capture','stale_element','stale_element_token','target_not_found','permission_denied','invalid_tool_arguments','invalid_tool_json','tool_exception','delivered_step_replay','cross_route_replay_blocked','other',
 ]);
 const label=(value,allowed)=>typeof value==='string'?(allowed.has(value)?value:'other'):undefined;
 const count=value=>Number.isSafeInteger(value)&&value>=0&&value<=100?value:undefined;
@@ -27,7 +27,7 @@ function toolDiagnostics(output,error){
     else if(error)result.code='tool_exception';
   }
   for(const key of ['attempted','completed']){const value=count(output?.[key]);if(value!==undefined)result[key]=value;}
-  for(const key of ['verified','outcome_unknown','action_attempted','refused','input_suppressed','recovery_required','read_only_recovery'])if(typeof output?.[key]==='boolean')result[key]=output[key];
+  for(const key of ['verified','outcome_unknown','action_attempted','refused','input_suppressed','recovery_required','read_only_recovery','distinct_action_recovery'])if(typeof output?.[key]==='boolean')result[key]=output[key];
   return result;
 }
 
@@ -37,8 +37,14 @@ function taskTimingSummary(timing,allowedTools){
   const summary={at:new Date().toISOString(),route:['model','hybrid','local','browser','workflow','replay','folder'].includes(timing?.route)?timing.route:'other'};
   for(const key of ['totalMs','modelRequests','modelMs','toolCalls','toolMs'])summary[key]=boundedNumber(timing?.[key]);
   for(const key of ['localGroundingAttempts','localGroundingMs','preparationRequests','preparationMs'])if(timing?.[key]!==undefined)summary[key]=boundedNumber(timing[key]);
+  if(timing?.localCompletion===true)summary.localCompletion=true;
+  if(timing?.parallelGoalVerified===true)summary.parallelGoalVerified=true;
+  if(Array.isArray(timing?.modelCalls))summary.modelCalls=timing.modelCalls.slice(0,80).map(call=>({
+    transport:['http','websocket'].includes(call.transport)?call.transport:'other',success:call.success===true,fallback:call.fallback===true,
+    ms:boundedNumber(call.ms),firstEventMs:Number.isFinite(call.firstEventMs)?boundedNumber(call.firstEventMs):null,firstTextMs:Number.isFinite(call.firstTextMs)?boundedNumber(call.firstTextMs):null,
+  }));
   summary.steps=(Array.isArray(timing?.steps)?timing.steps:[]).slice(0,256).map(step=>({
-    kind:['tool','decision','verification','grounding','local_grounding'].includes(step?.kind)?step.kind:'other',
+    kind:['tool','decision','verification','goal_compilation','grounding','local_grounding'].includes(step?.kind)?step.kind:'other',
     ...(allowed.has(step?.name)?{name:step.name}:{}),ms:boundedNumber(step?.ms),
     ...(step?.kind==='tool'?toolDiagnostics(step):{}),
   }));

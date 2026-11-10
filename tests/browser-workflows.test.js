@@ -142,7 +142,7 @@ test('tab activation honors cancellation and never retries a lost dispatch resul
 });
 test('tab activation runs through the real AI router without keys, model calls or a review round trip',async()=>{
   const {AI}=require('../ai'),{validateTool}=require('../core'),f=activationFixture();
-  const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No credentials'),async(name,args)=>{validateTool(name,args);return f.dispatch(name,args);},()=>assert.fail('No network'));
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No credentials'),async(name,args)=>{validateTool(name,args);return f.dispatch(name,args);},()=>assert.fail('No network'));
   ai.reviewDesktop=()=>assert.fail('No review for verified tab activation');
   assert.equal(await ai.chat('switch to the Gmail tab in Opera'),'Your Gmail tab is in front.');assert.equal(ai.lastTaskTiming.route,'browser');assert.equal(ai.lastTaskTiming.modelRequests,0);assert.equal(ai.lastTaskTiming.toolCalls,2);
 });

@@ -4,6 +4,20 @@
   const refused=(code,message)=>({status:'refused',code,message,verified:false,action_attempted:false});
   function createPageOperations(chrome,{now=Date.now,plan=globalThis.MitchPlan}={}){
     let serial=Promise.resolve();const active=new Map();
+    // Fixed isolated-world inspection, never planner-supplied JavaScript.
+    const frameIdentity=()=>({url:location.href,title:document.title});
+    async function frameInventory(tabId){
+      const rows=await chrome.scripting.executeScript({target:{tabId,allFrames:true},world:'ISOLATED',func:frameIdentity});
+      return (rows||[]).filter(r=>r.frameId>0&&typeof r.documentId==='string'&&/^https?:/.test(r.result?.url||'')).slice(0,16).map(r=>({frame_id:r.frameId,browser_document_id:r.documentId,url:r.result.url,title:String(r.result.title||'').slice(0,200)}));
+    }
+    async function inspectFrame(tabId,frame,context){
+      if(!Number.isSafeInteger(frame?.frame_id)||frame.frame_id<=0||typeof frame.browser_document_id!=='string'||frame.browser_document_id.length>160)throw Object.assign(Error('Read an embedded frame before acting.'),{code:'invalid_frame'});
+      const url=new URL(frame.url);if(!['http:','https:'].includes(url.protocol)||url.username||url.password)throw Object.assign(Error('Unsupported frame URL.'),{code:'invalid_frame'});
+      if(!await chrome.permissions.contains({origins:[url.protocol+'//'+url.hostname+'/*']}))throw Object.assign(Error('This embedded origin needs page access.'),{code:'page_permission_required'});
+      assertActive(context);
+      const rows=await chrome.scripting.executeScript({target:{tabId,documentIds:[frame.browser_document_id]},world:'ISOLATED',func:frameIdentity});assertActive(context);
+      if(rows?.length!==1||rows[0].frameId!==frame.frame_id||rows[0].documentId!==frame.browser_document_id||rows[0].result?.url!==frame.url)throw Object.assign(Error('The embedded document changed; observe it again.'),{code:'stale_frame'});
+    }
     function assertActive(context){if(context.isCancelled?.())throw Object.assign(Error('The page request was stopped.'),{code:'cancelled'});if(!Number.isFinite(context.deadline)||context.deadline<=now())throw Object.assign(Error('The page request expired.'),{code:'deadline_exceeded'});}
     async function inspect(expected,context){
       assertActive(context);
@@ -19,7 +33,7 @@
       if(!allowed)throw Object.assign(Error('Enable page controls in the Mitch Browser Bridge popup first.'),{code:'page_permission_required'});
       return tab;
     }
-    async function cancel(id){const job=active.get(id);if(!job)return;job.cancelled=true;try{await chrome.tabs.sendMessage(job.tabId,{type:'mitch_page_cancel',id},{frameId:0});}catch{}}
+    async function cancel(id){const job=active.get(id);if(!job)return;job.cancelled=true;try{await chrome.tabs.sendMessage(job.tabId,{type:'mitch_page_cancel',id},job.frameOptions||{frameId:0});}catch{}}
     async function recoverAfterInput(result,expected,context){
       // An unknown delivery must never issue a second plan. A navigation can
       // destroy its reply port, however, so inspect the same eligible tab once
@@ -190,7 +204,7 @@
     async function run(method,args,context){
       const mutating=method==='page.plan';let issued=false,ledger,entry;
       if(!['page.observe','page.plan'].includes(method))return refused('unsupported_method','This page operation is unsupported.');
-      if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(key=>!(mutating?['expectedTab','snapshot','steps','completion']:['expectedTab','selector']).includes(key)))return refused('invalid_args','Unexpected page operation arguments.');
+      if(!args||typeof args!=='object'||Array.isArray(args)||Object.keys(args).some(key=>!(mutating?['expectedTab','expectedFrame','snapshot','steps','completion']:['expectedTab','expectedFrame','selector']).includes(key)))return refused('invalid_args','Unexpected page operation arguments.');
       if(typeof context.id!=='string'||!context.id||context.id.length>128||['__proto__','constructor','prototype'].includes(context.id))return refused('invalid_request','A bounded request ID is required.');
       const bounded={...context,deadline:Math.min(context.deadline,now()+30000)};
       try{
@@ -202,7 +216,9 @@
           if(Object.keys(ledger).length>=MAX_LEDGER)return refused('ledger_full','Restart the browser before issuing more page plans.');
         }
         await inspect(args.expectedTab,bounded);
-        await chrome.scripting.executeScript({target:{tabId:args.expectedTab.id,frameIds:[0]},world:'ISOLATED',files:['action-plan.js','page-agent.js']});
+        if(args.expectedFrame)await inspectFrame(args.expectedTab.id,args.expectedFrame,bounded);
+        const frameOptions=args.expectedFrame?{documentId:args.expectedFrame.browser_document_id}:{frameId:0};
+        await chrome.scripting.executeScript({target:{tabId:args.expectedTab.id,...(args.expectedFrame?{documentIds:[args.expectedFrame.browser_document_id]}:{frameIds:[0]})},world:'ISOLATED',files:['action-plan.js','page-agent.js']});
         await inspect(args.expectedTab,bounded);
         if(mutating){
           entry={state:'pending',at:now()};ledger[context.id]=entry;
@@ -210,22 +226,24 @@
           // Revalidate after durable reservation, immediately before the only issuance.
           await inspect(args.expectedTab,bounded);
         }
-        const job={tabId:args.expectedTab.id,cancelled:false};active.set(context.id,job);
-        const payload={type:mutating?'mitch_page_plan':'mitch_page_observe',id:context.id,deadline:bounded.deadline,expectedUrl:args.expectedTab.url,...(mutating?{snapshot:args.snapshot,steps:args.steps,completion:args.completion}:{selector:args.selector})};
+        if(args.expectedFrame)await inspectFrame(args.expectedTab.id,args.expectedFrame,bounded);
+        const job={tabId:args.expectedTab.id,cancelled:false,frameOptions};active.set(context.id,job);
+        const payload={type:mutating?'mitch_page_plan':'mitch_page_observe',id:context.id,deadline:bounded.deadline,expectedUrl:args.expectedFrame?.url||args.expectedTab.url,...(mutating?{snapshot:args.snapshot,steps:args.steps,completion:args.completion}:{selector:args.selector})};
         issued=mutating;
         let timer;
         const timeout=new Promise((_,reject)=>{timer=setTimeout(()=>{cancel(context.id);reject(Object.assign(Error('No confirmed page result arrived before the deadline.'),{code:'deadline_exceeded'}));},Math.max(1,bounded.deadline-now()));});
-        let result;try{result=await Promise.race([chrome.tabs.sendMessage(job.tabId,payload,{frameId:0}),timeout]);}finally{clearTimeout(timer);active.delete(context.id);}
+        let result;try{result=await Promise.race([chrome.tabs.sendMessage(job.tabId,payload,frameOptions),timeout]);}finally{clearTimeout(timer);active.delete(context.id);}
         if(!result||typeof result!=='object'||Array.isArray(result))throw Object.assign(Error('The page returned no usable result.'),{code:'invalid_reply'});
+        if(!mutating&&!args.expectedFrame&&result.has_iframes){try{result.frames=await frameInventory(job.tabId);}catch{result.frames_unavailable=true;}}
         if(mutating){
           entry.state='complete';entry.result={status:result.status,verified:result.verified===true,outcome_unknown:result.outcome_unknown===true,reason:result.reason||result.code};
           await chrome.storage.session.set({[LEDGER]:ledger});
         }
-        return mutating?await recoverAfterInput(result,args.expectedTab,bounded):result;
+        return mutating&&!args.expectedFrame?await recoverAfterInput(result,args.expectedTab,bounded):result;
       }catch(error){
         const code=error.code||'page_operation_failed';
         const result={status:code==='cancelled'?'cancelled':issued?'interrupted':'refused',code,reason:code,message:error.message||'The page could not confirm this operation.',verified:false,action_attempted:issued,...(issued?{outcome_unknown:true}:{})};
-        return issued?await recoverAfterInput(result,args.expectedTab,bounded):result;
+        return issued&&!args.expectedFrame?await recoverAfterInput(result,args.expectedTab,bounded):result;
       }finally{active.delete(context.id);}
     }
     function execute(method,args,context={}){

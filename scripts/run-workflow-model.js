@@ -1,16 +1,10 @@
 'use strict';
-const {app,safeStorage}=require('electron');
-const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const path=require('node:path');
+const {connect,app}=require('./chatgpt-benchmark-host');
 const {runBenchmark,runCacheBenchmark}=require('./benchmark-workflow-model');
-const directory=path.resolve(__dirname,'../test-output'),originalProfile=path.join(app.getPath('appData'),'Pixie Windows Companion');
-let temporaryProfile,key='',passed=false,startupError,stage='profile_metadata';
-// OS encrypted wrapping metadata is copied into an isolated Electron profile.
-// The API key remains in memory; it never enters argv, a log, or a file.
-try{const state=JSON.parse(fs.readFileSync(path.join(originalProfile,'Local State'),'utf8'));if(!state.os_crypt?.encrypted_key)throw Object.assign(Error(),{code:'encrypted_metadata_missing'});temporaryProfile=fs.mkdtempSync(path.join(os.tmpdir(),'mitch-workflow-model-'));fs.writeFileSync(path.join(temporaryProfile,'Local State'),JSON.stringify({os_crypt:state.os_crypt}));app.setName('Mitch');app.setPath('userData',temporaryProfile);app.setAppUserModelId('local.independent.pixie.windows');}catch(error){startupError=error;}
-app.whenReady().then(async()=>{
-  if(startupError)throw startupError;stage='saved_settings';const saved=JSON.parse(fs.readFileSync(path.join(originalProfile,'library.json'),'utf8'));if(typeof saved.encryptedDeepSeekKey!=='string'||!saved.encryptedDeepSeekKey)throw Object.assign(Error(),{code:'encrypted_key_missing'});
-  stage='decrypt';
-  key=(await safeStorage.decryptStringAsync(Buffer.from(saved.encryptedDeepSeekKey,'base64'))).result;
-  const variant=process.argv.includes('--conditional-probe')?{versions:['workflow'],repeats:2,tasks:['conditional'],taskLimit:8,nonThinkingPlanner:true,reportName:'workflow-model-final-conditional.json'}:process.argv.includes('--nonthinking-probe')?{versions:['workflow'],repeats:1,taskLimit:6,nonThinkingPlanner:true,reportName:'workflow-model-nonthinking-probe.json'}:process.argv.includes('--probe')?{versions:['workflow'],repeats:1,reportName:'workflow-model-refined-probe.json'}:process.argv.includes('--current-tail')?{versions:['workflow'],trialStart:2,repeats:2,reportName:'workflow-model-refined-tail.json'}:process.argv.includes('--diagnostic')?{versions:['workflow'],repeats:1,tasks:['conditional'],reportName:'workflow-model-ast-diagnostic.json'}:{};
-  const cacheRepair=process.argv.includes('--cache-repaired');stage='benchmark';const run=process.argv.includes('--cache')||cacheRepair?runCacheBenchmark:runBenchmark;const report=await run({key,settings:saved.settings,directory,...variant,...(cacheRepair?{nonThinkingPlanner:true,taskLimit:4,reportName:'workflow-cache-model-repaired.json'}:{}),onProgress:progress=>console.log(JSON.stringify(progress))});passed=report.status==='completed';console.log(JSON.stringify({status:report.status,summary:report.summary,rows:report.rows?.map(r=>({task:r.task,mode:r.mode,status:r.status,verified:r.verified,durationMs:r.durationMs,modelRequests:r.modelRequests}))}));
-}).catch(error=>{const report={status:'failed',stage,errorCode:typeof error.code==='string'&&/^[a-z_0-9]+$/i.test(error.code)?error.code.toLowerCase():'benchmark_startup_failed'};fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'workflow-model-startup.json'),JSON.stringify(report,null,2));console.error(JSON.stringify(report));}).finally(()=>{key='';let encryptedMetadataRemoved=true;if(temporaryProfile){try{fs.unlinkSync(path.join(temporaryProfile,'Local State'));}catch{}encryptedMetadataRemoved=!fs.existsSync(path.join(temporaryProfile,'Local State'));}fs.mkdirSync(directory,{recursive:true});fs.writeFileSync(path.join(directory,'workflow-model-runner.json'),JSON.stringify({temporaryProfile,encryptedMetadataRemoved},null,2));app.exit(passed?0:1);});
+let host,passed=false;
+connect().then(async value=>{
+  host=value;const run=process.argv.includes('--cache')?runCacheBenchmark:runBenchmark;
+  const report=await run({settings:host.settings,directory:path.resolve(__dirname,'../test-output'),modelRequest:(body,signal)=>host.provider.request(body,{signal,allowScreen:false}),repeats:1,versions:['workflow'],onProgress:p=>console.log(JSON.stringify(p))});
+  passed=report.status==='completed';console.log(JSON.stringify({status:report.status,summary:report.summary}));
+}).catch(error=>console.error(error.message)).finally(()=>{host?.close();app.exit(passed?0:1);});

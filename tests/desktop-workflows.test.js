@@ -199,7 +199,7 @@ test('existing-app focus runs through the real AI router with zero model request
   const {AI}=require('../ai'),{validateTool}=require('../core');
   for(const focused of [{},{focus_verified:false}]){
     const f=focusFixture({focused});
-    const ai=new AI(()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false}),()=>assert.fail('No credentials needed'),async(name,args)=>{validateTool(name,args);return f.dispatch(name,args);},()=>assert.fail('No network call'));
+    const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>assert.fail('No credentials needed'),async(name,args)=>{validateTool(name,args);return f.dispatch(name,args);},()=>assert.fail('No network call'));
     ai.reviewDesktop=()=>assert.fail('No AI review for an exact focus-only request');
     const answer=await ai.chat('switch to Notepad');
     assert.match(answer,focused.focus_verified===false?/did not confirm/:/is in front/);assert.equal(ai.lastTaskTiming.modelRequests,0);assert.equal(ai.lastTaskTiming.toolCalls,2);

@@ -22,6 +22,16 @@ async function pair(bridge,{browser='opera',clientId='profile-a',sessionId='sess
   const ready=once(ws,'message');ws.send(JSON.stringify({type:'hello',token,clientId,browser,sessionId,...hello}));assert.equal(JSON.parse((await ready)[0]).type,'ready');return client;
 }
 async function waitUntil(predicate){for(let i=0;i<100;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,2));}throw Error('Test condition not reached');}
+test('public-site tasks require an updated adapter before sending input',async t=>{
+ const bridge=await setup(t),client=await pair(bridge);const list=await bridge.list({});const result=await bridge.runSiteTask({snapshot:list.snapshot,site:'wikipedia',action:'open',query:'Ada Lovelace'});assert.equal(result.action_attempted,false);assert.equal(result.code,'page_adapter_update_required');assert.equal(client.commands.length,1);
+});
+test('public-site receipt must prove the exact result and tab scope, with no replay after uncertainty',async t=>{
+ const bridge=await setup(t),context={activityScope:Symbol('site')};let valid=true;
+ const client=await pair(bridge,{capabilities:['public-sites-v1'],tabs:[tab(1,{url:'https://en.wikipedia.org/wiki/Computer_mouse'})],respond:async m=>m.method==='tabs.list'?{status:'ok',tabs:[tab(1,{url:'https://en.wikipedia.org/wiki/Computer_mouse'})]}:{status:'completed',verified:true,action_attempted:true,goal:m.args.goal,tab_id:valid?1:99,window_id:10,observation:{url:'https://en.wikipedia.org/wiki/Ada_Lovelace',heading:'Ada Lovelace'}}});
+ let list=await bridge.list({});assert.equal((await bridge.runSiteTask({snapshot:list.snapshot,site:'wikipedia',action:'open',query:'Ada Lovelace'},context)).verified,true);
+ assert.equal(client.commands.at(-1).args.expectedTab.id,1);valid=false;list=await bridge.list({});assert.equal((await bridge.runSiteTask({snapshot:list.snapshot,site:'wikipedia',action:'open',query:'Ada Lovelace'},context)).outcome_unknown,true);
+ list=await bridge.list({});await assert.rejects(bridge.runSiteTask({snapshot:list.snapshot,site:'wikipedia',action:'open',query:'Ada Lovelace'},context),e=>e.code==='browser_outcome_unknown');
+});
 async function denied(bridge,{origin:requestOrigin=origin,headers={},route='/mitch-browser'}={}){
   const ws=new WebSocket(`ws://127.0.0.1:${bridge.port}${route}`,{origin:requestOrigin,headers});ws.on('error',()=>{});
   return new Promise(resolve=>{ws.on('unexpected-response',(_request,response)=>{response.resume();resolve(response.statusCode);ws.terminate();});});
@@ -31,7 +41,7 @@ test('bridge binds loopback and rejects wrong Origin, Host and endpoint before a
   assert.equal(await denied(bridge,{origin:'https://mail.google.com'}),403);
   assert.equal(await denied(bridge,{headers:{host:'attacker.invalid'}}),403);
   assert.equal(await denied(bridge,{route:'/mitch-browser?token=leak'}),403);
-  assert.deepEqual(bridge.status(),{running:true,port:bridge.port,connected:0,pageCapable:0,pageAccess:0,recoveryCapable:0,navigationCapable:0,browsers:[]});
+  assert.deepEqual(bridge.status(),{running:true,port:bridge.port,connected:0,pageCapable:0,pageAccess:0,recoveryCapable:0,navigationCapable:0,publicSiteCapable:0,browsers:[]});
 });
 test('wrong token and unsupported browser cannot authenticate',async t=>{
   const bridge=await setup(t);

@@ -48,6 +48,14 @@ test('inherited final assertions are freshly rechecked after a completed action 
   const result=await executeTaskProgram({program,host:fixture.host});assert.equal(result.status,'interrupted');assert.equal(result.reason,'completion_unmet');assert.equal(result.completion[0].passed,false);assert.equal(fixture.calls.filter(call=>call[0]==='input').length,1);
 });
 
+test('all final predicates use one fresh frame and cannot combine different UI states',async()=>{
+  const fixture=hostFixture();fixture.host.set([control('First'),control('Second')]);
+  let finalReads=0;const observe=fixture.host.observe;
+  fixture.host.observe=async(options,ctx)=>{if(options.refresh){finalReads++;fixture.host.set(finalReads===1?[control('First')]:[control('Second')]);}return observe(options,ctx);};
+  const program={version:1,steps:[bind],completion:[exists('First'),exists('Second')]};
+  const result=await executeTaskProgram({program,host:fixture.host});assert.equal(finalReads,1);assert.equal(result.reason,'completion_unmet');assert.equal(result.completion[1].passed,false);assert.equal(fixture.calls.some(c=>c[0]==='input'),false);
+});
+
 test('omitted completion with unsupported terminals or malformed phase predicates fails before discovery or input',async()=>{
   const invalidTerminals=[bind,{op:'read',target:target('Done'),attribute:'name',as:'name'},{op:'if',condition:exists('Done'),then:[phase([click('Next')],[exists('Done')])]},{op:'wait',condition:exists('Done')},{op:'follow_link',target:target('Next','link'),completion:[exists('Done')]},phase([click('Next')],[]),phase([click('Next')],[{target:target('Done'),condition:'value'}]),phase([click('Next')],[{target:target('Done'),condition:'value',value:{ref:'undefinedValue'}}])];
   for(const terminal of invalidTerminals){const fixture=hostFixture(),result=await executeTaskProgram({program:{version:1,steps:[bind,terminal]},host:fixture.host});assert.equal(result.reason,'invalid_program');assert.equal(fixture.calls.length,0);}
@@ -142,6 +150,16 @@ test('known partial phase retains recovery evidence but does not continue input'
   const fixture=hostFixture();let phases=0;
   fixture.host.perform=async()=>{phases++;return {status:'interrupted',recovery_required:true,attempted:1,delivered_steps:[{op:'click',target:target('Next')}],observation:frame([control('Done')])};};
   const result=await executeTaskProgram({program:basic(),host:fixture.host});assert.equal(result.recovery_required,true);assert.equal(result.outcome_unknown,undefined);assert.equal(phases,1);assert.equal(result.observation.controls[0].name,'Done');
+});
+
+test('nested native and browser recovery evidence reaches the caller without running another workflow phase',async()=>{
+ for(const native of [true,false]){
+  const fixture=hostFixture();let phases=0;
+  fixture.host.perform=async()=>{phases++;return {status:'interrupted',reason:'ambiguous_target',outcome_unknown:true,read_only_recovery:true,...(native?{distinct_action_recovery:true,recovery:{observed:true,state_changed:true},attempted_steps:[click('Next')]}:{}),observation:{...frame([control('Done')]),source:native?'native-accessibility':'browser_dom'}};};
+  const program=basic();program.steps.push(phase([click('Done')],[exists('Done')]));
+  const result=await executeTaskProgram({program,host:fixture.host});
+  assert.equal(phases,1);assert.equal(result.outcome_unknown,true);assert.equal(result.read_only_recovery,true);assert.equal(result.source_reason,'ambiguous_target');assert.equal(result.distinct_action_recovery,native?true:undefined);
+ }
 });
 
 test('cancellation after discovery prevents input and a timed-out phase cannot dispatch late',async()=>{

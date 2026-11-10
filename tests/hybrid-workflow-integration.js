@@ -65,7 +65,7 @@ module.exports=async function({BrowserWindow,computer,dispatch,desktopActivity,d
   };
   try{
     const target=await create(title),cover=await create(coverTitle);
-    ai=new AI(()=>({chatProvider:'deepseek',chatModel:'deepseek-flash',allowDesktop:true,allowScreen:false}),()=>{throw Error('Credentials forbidden in hybrid fixture');},wrappedDispatch,()=>{throw Error('Network forbidden in hybrid fixture');});
+    ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),()=>{throw Error('Credentials forbidden in hybrid fixture');},wrappedDispatch,()=>{throw Error('Network forbidden in hybrid fixture');});
     ai.request=async()=>{modelRequests++;throw Error('Model fallback forbidden in hybrid fixture');};
     ai.reviewDesktop=async()=>{throw Error('Model review forbidden for an exactly verified focus request');};
     computer.client.call=async(name,args)=>{

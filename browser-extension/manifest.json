@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Mitch Browser Bridge",
-  "version": "1.2.0",
+  "version": "1.6.0",
   "description": "Connects browser tabs and optional page controls to your local Mitch desktop app.",
   "minimum_chrome_version": "116",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyMo58tIKfo3vbZrKp6vzI7kDyI72JKhwo+KWEvIsuhTZnfSnO/oENzawbNQ8nK/iuEQ99JGiIgy2gTCko0wAnuaCC7RyN+L14DFhcQ7IzmEK284Ih02vtxsyztWpkoiacbJU6pN0y23pLigiBTjEiPO57LRCfyarnGJBzks0cIQBQ9S4aUN6mdXR8PkfkcNSqJO9bVbI/CFW2NT39tagfDKvnubXC0xpSbN1i+M0NqCAupHNeteZUCYPbG+1OlihNLFFu/CBLxSWTIpWCbUKF0O9+AbH4qrTiK17FdFhBx9t4piZW/gKdh90iq+H3YD2WmR9POez5TX0CV6vwgWFtQIDAQAB",

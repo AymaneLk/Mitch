@@ -1,7 +1,7 @@
 'use strict';
 const {localURL,localTranscribe}=require('./local-ai');
 const {RealtimeTranscription}=require('./realtime-transcription');
-const ACKNOWLEDGEMENT="Got it. I'm on it.";
+const {desktopRequest}=require('./workflow-assistant');
 const PREPARE_DEBOUNCE_MS=400,PREPARE_TTL_MS=3000,MAX_PREPARATIONS=2;
 // Preserve case, quoted contents and internal whitespace: they can be actual
 // input data. Only boundary whitespace is irrelevant to request identity.
@@ -9,7 +9,7 @@ const preparedText=text=>typeof text==='string'?text.trim():'';
 class LocalConversation {
   constructor(ai,getSettings,fetcher=fetch,{notify=()=>{},prepare,now=Date.now,createTranscription=(onText,options)=>new RealtimeTranscription(onText,options)}={}){this.ai=ai;this.getSettings=getSettings;this.fetch=fetcher;this.notify=notify;this.prepare=prepare;this.now=now;this.createTranscription=createTranscription;this.generation=0;this.active=false;this.busy=false;this.inputSequence=0;}
   start(){this.stop();this.active=true;return this.generation;}
-  stop(){this.active=false;this.generation++;this.controller?.abort();this.cancelInput();this.warmController?.abort();this.ai.cancel();}
+  stop(){this.active=false;this.generation++;this.controller?.abort();this.cancelInput();this.ai.cancel();}
   cancelInput(input=this.input,{keepPreparation=false}={}){
     if(!input)return;clearTimeout(input.prepareTimer);if(!keepPreparation)input.preparation?.controller.abort();input.stream.cancel();if(this.input===input)this.input=null;
   }
@@ -20,7 +20,7 @@ class LocalConversation {
     // even when the new wording is not a supported preparation intent.
     input.preparation?.controller.abort();input.preparation=null;
     if(input.preparationCount>=MAX_PREPARATIONS)return;
-    if(!/^(?:(?:hey|hi) mitch[, ]+)?(?:(?:can|could|would) you |please )?(?:open|launch|start|show|find|search|focus|switch to|go to)\s+\S{3}/i.test(text.trim()))return;
+    if(text.trim().length<8||!desktopRequest(text))return;
     const revision=input.revision,normalizedText=input.text;
     input.prepareTimer=setTimeout(()=>{
       if(!this.active||this.generation!==generation||this.input!==input||input.finishing||input.revision!==revision)return;
@@ -54,21 +54,12 @@ class LocalConversation {
     if(!response.ok)throw new Error('Local speech generation failed.');
     return Array.from(new Uint8Array(await response.arrayBuffer()));
   }
-  warmAcknowledgement(){
-    const key=this.getSettings().localSpeechUrl;
-    if(this.ackAudio?.key===key)return Promise.resolve(this.ackAudio.audio);
-    if(this.ackPending&&!this.warmController.signal.aborted)return this.ackPending;
-    this.warmController=new AbortController();
-    const pending=this.speech(ACKNOWLEDGEMENT,AbortSignal.any([this.warmController.signal,AbortSignal.timeout(10000)]))
-      .then(audio=>{this.ackAudio={key,audio};return audio;}).catch(()=>[]);
-    this.ackPending=pending;pending.finally(()=>{if(this.ackPending===pending)this.ackPending=null;});
-    return this.ackPending;
-  }
   async beginInput(generation,sampleRate){
     this.check(generation);if(this.busy)throw new Error('Wait for the current voice reply.');
     if(!Number.isInteger(sampleRate)||sampleRate<8000||sampleRate>96000)throw new Error('Invalid microphone sample rate.');
     this.cancelInput();
-    this.warmAcknowledgement();
+    // Warm local input services without synthesizing a stock acknowledgement.
+    this.ai.warmDesktop?.().catch(()=>{});
     // Custom speech adapters keep the existing full-recording path.
     if(this.getSettings().localSpeechUrl!=='http://127.0.0.1:22132')return null;
     const id=++this.inputSequence;
@@ -95,7 +86,7 @@ class LocalConversation {
     let adopted;
     try{
       const settings=this.getSettings();
-      if(!['local','deepseek'].includes(settings.chatProvider)||settings.transcriptionProvider!=='local')throw new Error('Voice requires Local or DeepSeek chat and local dictation.');
+      if(!['local','chatgpt'].includes(settings.chatProvider)||settings.transcriptionProvider!=='local')throw new Error('Voice requires Local or ChatGPT chat and local dictation.');
       let transcript;
       if(input){input.finishing=true;clearTimeout(input.prepareTimer);}
       if(streamFailed)input?.stream.cancel();
@@ -105,12 +96,8 @@ class LocalConversation {
       adopted=this.adoptPreparation(input,transcript,generation,signal);
       this.cancelInput(input,{keepPreparation:!!adopted});
       this.notify({type:'transcript',text:transcript,generation,inputId,final:true});
-      this.notify({type:'working',text:ACKNOWLEDGEMENT,generation,inputId});
-      // Synthesis is cached during listening. Reasoning begins immediately while
-      // the acknowledgement plays; it does not claim the task has succeeded.
-      const acknowledgement=this.warmAcknowledgement().then(audio=>{if(!signal.aborted&&this.active&&generation===this.generation)this.notify({type:'acknowledgement',audio,generation,inputId});});
+      this.notify({type:'working',generation,inputId});
       const answer=await this.ai.chat(transcript,undefined,scope,{spoken:true,...(adopted?{prepared:adopted.value}:{})});check();
-      await acknowledgement;check();
       const audio=await this.speech(answer,signal);check();
       return {transcript,answer,audio};
     }finally{adopted?.release();this.cancelInput(input);this.controller.abort();this.busy=false;}

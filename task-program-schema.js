@@ -5,12 +5,13 @@ const text=maxLength=>({type:'string',minLength:1,maxLength});
 const variable={type:'string',pattern:'^[A-Za-z][A-Za-z0-9_]{0,31}$'};
 const reference={type:'object',properties:{ref:variable},required:['ref'],additionalProperties:false};
 const value={anyOf:[{type:'string',maxLength:8000},reference]};
-const selector={type:'object',properties:{name:{anyOf:[text(300),reference]},role:text(60),match:{type:'string',enum:['exact','contains']}},required:['name'],additionalProperties:false};
+const ancestor={type:'object',properties:{name:text(300),role:text(60),match:{type:'string',enum:['exact','contains']}},required:['name'],additionalProperties:false};
+const selector={type:'object',properties:{within:ancestor,name:{anyOf:[text(300),reference]},role:text(60),match:{type:'string',enum:['exact','contains']}},required:['name'],additionalProperties:false};
 const predicate={type:'object',properties:{target:selector,condition:{type:'string',enum:['exists','absent','value','checked','selected']},value},required:['target','condition'],additionalProperties:false};
 const primitive={type:'object',properties:{op:{type:'string',enum:['click','fill','select','press','wait','assert']},target:selector,text:value,value,key:{type:'string',enum:['Enter','Tab','Escape','ArrowDown','ArrowUp','ArrowLeft','ArrowRight']},condition:{type:'string',enum:['exists','absent','value','checked','selected']},timeout_ms:{type:'integer',minimum:0,maximum:5000}},required:['op','target'],additionalProperties:false};
 const binding={oneOf:[
   {type:'object',properties:{kind:{const:'native'},app:text(100),open_if_missing:{type:'boolean'}},required:['kind','app'],additionalProperties:false},
-  {type:'object',properties:{kind:{const:'browser'},hostname:text(253),browser:{type:'string',enum:['opera','chrome','edge']},title:text(300),open_if_missing:{type:'boolean'},url:text(2000)},required:['kind','hostname'],additionalProperties:false},
+  {type:'object',properties:{kind:{const:'browser'},frame_id:{type:'integer',minimum:0},hostname:text(253),browser:{type:'string',enum:['opera','chrome','edge']},title:text(300),open_if_missing:{type:'boolean'},url:text(2000)},required:['kind','hostname'],additionalProperties:false},
 ]};
 const transition={oneOf:[
   {type:'object',properties:{kind:{const:'same_tab'}},required:['kind'],additionalProperties:false},

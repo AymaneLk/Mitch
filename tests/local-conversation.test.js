@@ -21,7 +21,7 @@ test('ending during transcription prevents model actions and audio',async()=>{
   assert.equal(voice.busy,false);
 });
 
-test('live captions and acknowledgement arrive before reasoning completes; final transcript is used once',async()=>{
+test('live captions enter working without a canned acknowledgement or synthesis; final transcript is used once',async()=>{
   const events=[],chats=[],requests=[];let releaseAnswer,onText;
   const stream={ready:Promise.resolve(),append(){},cancel(){},async finish(){return 'Open Calculator.';}};
   const ai={cancel(){},chat(text){chats.push(text);return new Promise(resolve=>releaseAnswer=resolve);}};
@@ -30,8 +30,9 @@ test('live captions and acknowledgement arrive before reasoning completes; final
   onText('Open Calcu');assert.equal(events[0].text,'Open Calcu');assert.equal(chats.length,0);
   const pending=voice.turn(Buffer.from('fallback audio'),generation,null,input);
   await new Promise(resolve=>setImmediate(resolve));
-  assert.deepEqual(chats,['Open Calculator.']);assert.ok(events.some(e=>e.type==='working'));assert.ok(events.some(e=>e.type==='acknowledgement'&&e.audio.length===2));
+  assert.deepEqual(chats,['Open Calculator.']);assert.ok(events.some(e=>e.type==='working'&&!e.text));assert.equal(events.some(e=>e.type==='acknowledgement'),false);assert.equal(requests.length,0,'No filler speech before the actual answer');
   releaseAnswer('Calculator is open.');assert.equal((await pending).answer,'Calculator is open.');
+  assert.equal(requests.length,1,'Only the actual response is synthesized');
   assert.equal(requests.some(url=>url.endsWith('/transcribe')),false);voice.stop();
 });
 

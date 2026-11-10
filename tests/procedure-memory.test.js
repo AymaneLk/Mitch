@@ -69,8 +69,15 @@ test('fresh IDs and focus changes are accepted but changed UI values, roles, sta
   const renewed=clone(prepared),frame=renewed.scopes[0].observation;
   frame.snapshot='new';frame.document_id='new';frame.tab_id=42;frame.session_id='new';frame.controls[0].id='fresh';frame.controls[0].focused=true;
   assert.ok(memory.get('Search for Alpha',renewed));
-  const mutations=[f=>f.controls[0].value='Already changed',f=>f.controls[0].name='Other',f=>f.controls[1].role='link',f=>f.controls[1].enabled=false,f=>f.controls[0].selected=true,f=>f.controls.reverse(),f=>f.url='https://example.test/other',f=>f.browser='chrome'];
+  const mutations=[f=>f.controls[0].value='Already changed',f=>f.controls[0].name='Other',f=>f.controls[1].role='link',f=>f.controls[1].enabled=false,f=>f.controls[0].selected=true,f=>f.url='https://example.test/other',f=>f.browser='chrome'];
   for(const mutate of mutations){const changed=clone(prepared);mutate(changed.scopes[0].observation);assert.equal(memory.get('Search for Alpha',changed),null);}
+});
+test('unrelated layout changes reuse a procedure but ambiguous targets and new dialogs do not',()=>{
+  const memory=new ProcedureMemory(),prepared=context();memory.remember('Search for Alpha',prepared,program(),approved);
+  const changed=clone(prepared);changed.scopes[0].observation.controls.reverse();changed.scopes[0].observation.controls.push({name:'News updated',role:'heading'});
+  assert.ok(memory.get('Search for Alpha',changed));
+  changed.scopes[0].observation.controls.push({name:'Search',role:'button'});assert.equal(memory.get('Search for Alpha',changed),null);
+  const modal=clone(prepared);modal.scopes[0].observation.controls.push({name:'Confirm',role:'dialog'});assert.equal(memory.get('Search for Alpha',modal),null);
 });
 
 test('incomplete, protected, ambiguous and empty observations cannot establish replay state',()=>{

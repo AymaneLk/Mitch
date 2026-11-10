@@ -26,13 +26,14 @@ function ordinaryURL(value){
 }
 function validateTarget(target){
   if(!plain(target)||!['native','browser'].includes(target.kind))throw failure('invalid_scope','Choose a native app or browser scope.');
-  const allowed=target.kind==='native'?['kind','app','open_if_missing']:['kind','hostname','browser','title','open_if_missing','url'];
+  const allowed=target.kind==='native'?['kind','app','open_if_missing']:['kind','hostname','browser','title','open_if_missing','url','frame_id'];
   if(Object.keys(target).some(key=>!allowed.includes(key)))throw failure('invalid_scope','The program scope contains unsupported fields.');
   if(target.open_if_missing!==undefined&&typeof target.open_if_missing!=='boolean')throw failure('invalid_scope','open_if_missing must be a boolean.');
   if(target.kind==='native'){
     if(typeof target.app!=='string'||!target.app.trim()||target.app.length>120||/[\r\n]/.test(target.app))throw failure('invalid_scope','Choose a bounded exact app name.');
   }else{
     hostname(target.hostname);
+    if(target.frame_id!==undefined&&(!Number.isSafeInteger(target.frame_id)||target.frame_id<0))throw failure('invalid_scope','Use an observed frame identifier.');
     if(target.browser!==undefined&&!BROWSERS.has(target.browser))throw failure('invalid_scope','Unsupported browser.');
     if(target.title!==undefined&&(typeof target.title!=='string'||!target.title.trim()||target.title.length>300))throw failure('invalid_scope','Invalid exact tab title.');
     if(target.url!==undefined&&ordinaryURL(target.url).hostname!==target.hostname)throw failure('invalid_scope','The supplied URL must belong to the exact requested hostname.');
@@ -60,6 +61,7 @@ function normalizeFrame(output){
   if(browser?!Number.isSafeInteger(frame.tab_id):!validWindow(frame.window))throw failure('invalid_observation','The observation has no exact target identity.',output);
   const controls=frame.controls.map(control=>{
     const row={id:String(control.id??control.control_id??''),name:String(control.name??'').slice(0,1000),role:normalizeRole(control.role||control.type),enabled:control.enabled!==false,editable:control.editable===true,protected:control.protected===true};
+    if(control.ancestors?.length)row.ancestors=control.ancestors.slice(0,8).map(a=>({name:String(a.name??'').slice(0,300),role:normalizeRole(a.role)}));
     for(const key of ['checked','selected','focused'])if(typeof control[key]==='boolean')row[key]=control[key];
     if(!row.protected&&control.value!==undefined)row.value=String(control.value).slice(0,12000);
     if(Array.isArray(control.options)&&!row.protected)row.options=control.options.slice(0,100);
@@ -100,6 +102,7 @@ function createTaskProgramHost({dispatch,context={},onEvent,initialContext,now=D
     if(scope?.kind==='browser'){
       if(next.source!=='browser_dom'||next.tab_id!==scope.tab.tab_id||next.browser!==scope.browser||next.session_id!==scope.session||ordinaryURL(next.url).origin!==scope.origin)throw failure('scope_changed','The browser observation changed tab, profile or origin.');
       if(!allowDocumentChange&&scope.documentId&&next.document_id!==scope.documentId)throw failure('document_changed','The document changed. Use an explicit same-tab transition before more input.');
+      if((next.frame_id||0)!==(scope.target.frame_id||0))throw failure('scope_changed','The observation belongs to a different embedded frame.');
       scope.documentId=next.document_id;
     }
     frame=next;observedAt=now();return frame;
@@ -110,13 +113,18 @@ function createTaskProgramHost({dispatch,context={},onEvent,initialContext,now=D
       throw failure('outcome_unknown','Input was dispatched, but its returned target state could not be trusted. Further input is blocked.',{status:'interrupted',outcome_unknown:true,action_attempted:true,reason:error.code||'invalid_observation'});
     }
   }
+  async function inspectBrowserScope(list,tab,ctx){
+    let output=await run('browser_read_page',{snapshot:list.snapshot,tab_id:tab.tab_id},ctx);
+    if(scope.target.frame_id){output=await run('browser_read_page',{snapshot:output.snapshot,tab_id:tab.tab_id,frame_id:scope.target.frame_id},ctx);}
+    return output;
+  }
   async function readBrowser(ctx={},allowDocumentChange=false){
     const list=checkedTabList(await run('browser_list_tabs',{browser:scope.browser},ctx));
     if(list.session_id!==scope.session||list.browser!==scope.browser)throw failure('scope_changed','The browser profile reconnected; this task cannot reuse its tab identity.');
     const tab=list.tabs.find(tab=>tab.tab_id===scope.tab.tab_id);
     if(!tab||tab.window_id!==scope.tab.window_id||tab.pinned||tab.navigating||ordinaryURL(tab.url).origin!==scope.origin)throw failure('scope_changed','The bound tab moved, closed, became protected or changed origin.');
     scope.tab={...tab};
-    const output=await run('browser_read_page',{snapshot:list.snapshot,tab_id:tab.tab_id},ctx);
+    const output=await inspectBrowserScope(list,tab,ctx);
     return install(output,{allowDocumentChange});
   }
   async function bind(target,ctx={}){
@@ -153,7 +161,7 @@ function createTaskProgramHost({dispatch,context={},onEvent,initialContext,now=D
     }
     if(matches.length!==1)throw failure(matches.length?'ambiguous_scope':'scope_not_found',matches.length?'More than one tab matches. Use an exact observed title.':'No existing eligible tab matches the requested hostname.');
     const tab=matches[0];scope={kind:'browser',target,tab:{...tab},browser:list.browser,session:list.session_id,origin:ordinaryURL(tab.url).origin,documentId:null};
-    return install(await run('browser_read_page',{snapshot:list.snapshot,tab_id:tab.tab_id},ctx),{allowDocumentChange:true});
+    return install(await inspectBrowserScope(list,tab,ctx),{allowDocumentChange:true});
   }
   async function observe({refresh=false,forRead=false}={},ctx={}){
     check(ctx);if(!scope)throw failure('scope_not_bound','Bind an app or page before observing.');
@@ -211,9 +219,12 @@ function createTaskProgramHost({dispatch,context={},onEvent,initialContext,now=D
 
 const escaped=value=>value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 function mentions(text,value){const needle=normalize(value);return needle.length>=3&&new RegExp('(?:^|[^a-z0-9])'+escaped(needle)+'(?:$|[^a-z0-9])','i').test(normalize(text));}
-function compactFrame(frame){
-  const controls=frame.controls.slice(0,80).map(control=>({...control,name:control.name.slice(0,180),...(typeof control.value==='string'?{value:control.value.slice(0,500)}:{})}));
-  return {...frame,controls,...(frame.controls.length>80?{complete:false,context_truncated:true}:{})};
+function compactFrame(frame,text=''){
+  const words=new Set(text.toLowerCase().match(/[a-z0-9]{3,}/g)||[]);
+  const score=c=>(c.editable?12:0)+(['checked','selected'].some(k=>typeof c[k]==='boolean')?8:0)+(c.value!==undefined?6:0)+String(c.name+' '+(c.ancestors||[]).map(a=>a.name).join(' ')).toLowerCase().split(/[^a-z0-9]+/).filter(w=>words.has(w)).length*10;
+  const selected=frame.controls.length>80?frame.controls.map((c,i)=>({c,i,score:score(c)})).sort((a,b)=>b.score-a.score||a.i-b.i).slice(0,80).sort((a,b)=>a.i-b.i).map(x=>x.c):frame.controls;
+  const controls=selected.map(control=>({...control,name:control.name.slice(0,180),...(typeof control.value==='string'?{value:control.value.slice(0,500)}:{})}));
+  return {...frame,controls,...(frame.controls.length>80?{complete:false,context_truncated:true,source_complete:frame.complete===true}:{})};
 }
 /** Read-only preparation. No focus, launch, typing or screenshot is permitted. */
 async function prepareTaskContext({text,dispatch,context={},targets,now=Date.now}={}){
@@ -225,16 +236,19 @@ async function prepareTaskContext({text,dispatch,context={},targets,now=Date.now
   let windows=[],tabs=[],browser;
   try{if(windowsResult)windows=checkedWindowList(windowsResult).windows;}catch{errors.push('native_inventory_incomplete');}
   try{if(tabsResult){tabs=checkedTabList(tabsResult).tabs;browser=tabsResult.browser;}}catch{errors.push('browser_inventory_incomplete');}
+  const explicitScope=/^\s*(?:(?:please|can you|could you|would you)\s+)?(?:in|on|open|launch|focus|restore)\s+"([^"\r\n]{1,120})"/i.exec(text)?.[1];
+  const quotedScopes=[...text.matchAll(/\b(?:from|in|on|into)\s+"([^"\r\n]{1,120})"/gi)].map(m=>m[1]);
   const source=text.replace(/"[^"\r\n]*"|'[^'\r\n]*'|“[^”\r\n]*”/g,' '),selected=[];
   if(Array.isArray(targets))for(const target of targets.slice(0,4))selected.push(validateTarget(target));
   else{
     for(const tab of tabs){
       if(tab.pinned||tab.navigating)continue;let host;try{host=ordinaryURL(tab.url).hostname;}catch{continue;}
-      if(mentions(source,host)||Object.entries(sites).some(([name,hosts])=>hosts.includes(host)&&mentions(source,name)))selected.push({kind:'browser',hostname:host,browser});
+      if(mentions(source,host)||normalize(explicitScope)===host||Object.entries(sites).some(([name,hosts])=>hosts.includes(host)&&(mentions(source,name)||normalize(explicitScope)===name)))selected.push({kind:'browser',hostname:host,browser});
     }
     for(const window of windows){
       const app=canonical(String(window.app||'').replace(/\.exe$/,''));
-      const explicit=mentions(source,window.title)?window.title:mentions(source,app)?app:Object.keys(aliases).find(key=>(aliases[key].some(name=>mentions(source,name)))&&windowMatches(key,window));
+      const quoted=quotedScopes.find(name=>windowMatches(name,window));
+      const explicit=explicitScope&&windowMatches(explicitScope,window)?explicitScope:quoted||(mentions(source,window.title)?window.title:mentions(source,app)?app:Object.keys(aliases).find(key=>(aliases[key].some(name=>mentions(source,name)))&&windowMatches(key,window)));
       if(explicit&&!selected.some(target=>target.kind==='browser'&&canonical(explicit)===browser))selected.push({kind:'native',app:explicit});
     }
   }
@@ -250,7 +264,7 @@ async function prepareTaskContext({text,dispatch,context={},targets,now=Date.now
       if(matches.length!==1)return null;
       output=await read('browser_read_page',{snapshot:tabsResult.snapshot,tab_id:matches[0].tab_id});
     }
-    if(!output)return null;try{return {target,observation:compactFrame(normalizeFrame(output))};}catch{errors.push('scope_observation_unavailable');return null;}
+    if(!output)return null;try{return {target,observation:compactFrame(normalizeFrame(output),text)};}catch{errors.push('scope_observation_unavailable');return null;}
   }));check();
   return {preparedAt:now(),scopes:observations.filter(Boolean),windows:windows.slice(0,40).map(window=>({pid:window.pid,window_id:window.window_id,title:window.title.slice(0,180),app:String(window.app||'').slice(0,100),minimized:window.minimized===true})),tabs:tabs.slice(0,80).flatMap(tab=>{try{return [{tab_id:tab.tab_id,window_id:tab.window_id,hostname:ordinaryURL(tab.url).hostname,title:tab.title.slice(0,180),browser,pinned:tab.pinned}];}catch{return [];} }),errors:[...new Set(errors)]};
 }

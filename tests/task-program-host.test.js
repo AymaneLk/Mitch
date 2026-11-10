@@ -141,6 +141,25 @@ test('cancelled preparation or binding sends no subsequent reads or input',async
   await assert.rejects(prepareTaskContext({text:'Records',dispatch:()=>assert.fail('No calls'),context:{signal:abort.signal}}),/Stopped/);
 });
 
+test('a quoted app scope is prepared without treating quoted field values as other targets',async()=>{
+  for(const text of ['In "Records", set "Name" to "GitHub"','Open "Records" and go to "Settings"']){
+    const calls=[];const prepared=await prepareTaskContext({text,dispatch:async name=>{calls.push(name);if(name==='computer_list_windows')return windows();if(name==='browser_list_tabs')return tabs([{...tab,url:'https://github.com/user',title:'GitHub'}]);assert.equal(name,'computer_inspect_window');return native();}});
+    assert.equal(prepared.scopes.length,1);assert.equal(prepared.scopes[0].target.app,'Records');assert.equal(calls.includes('browser_read_page'),false);
+  }
+});
+
+test('cross-window copy prepares both quoted source and destination without acting',async()=>{
+ const calls=[],rows=[window,{...window,window_id:11,title:'Destination',app:'Destination.exe'}];
+ const prepared=await prepareTaskContext({text:'Copy Name from "Records" into "Destination"',dispatch:async(name,args)=>{calls.push(name);if(name==='computer_list_windows')return windows(rows);if(name==='browser_list_tabs')return tabs([]);assert.equal(name,'computer_inspect_window');return native({window:rows.find(w=>w.window_id===args.window_id)});}});
+ assert.deepEqual(prepared.scopes.map(s=>s.target.app),['Records','Destination']);assert.equal(calls.length,4);
+});
+
+test('a field value matching another running window is not an extra preparation scope',async()=>{
+ const rows=[window,{...window,window_id:11,title:'Other',app:'Other.exe'}];
+ const prepared=await prepareTaskContext({text:'In "Records", set Name to "Other"',dispatch:async(name,args)=>name==='computer_list_windows'?windows(rows):name==='browser_list_tabs'?tabs([]):native({window:rows.find(w=>w.window_id===args.window_id)})});
+ assert.deepEqual(prepared.scopes.map(s=>s.target.app),['Records']);
+});
+
 test('incomplete structured views cannot be promoted to actionable complete observations',async()=>{
   assert.equal(normalizeFrame(native({truncated:true})).complete,false);
   const host=createTaskProgramHost({dispatch:async name=>name==='computer_list_windows'?windows():native({degraded:true})});

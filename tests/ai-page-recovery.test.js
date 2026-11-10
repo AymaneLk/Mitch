@@ -3,20 +3,20 @@ const {test}=require('node:test'),assert=require('node:assert/strict');
 const {AI}=require('../ai');
 const {validateTool}=require('../core');
 const original='In the owned browser page, open my repositories.';
-const settings=()=>({chatProvider:'deepseek',chatModel:'test',allowDesktop:false,allowScreen:false});
+const settings=()=>({chatProvider:'chatgpt',chatModel:'test',allowDesktop:false,allowScreen:false});
 const plan={snapshot:'owned-source',steps:[{op:'click',target:{role:'link',name:'Your repositories'}}],completion:[{target:{role:'heading',name:'Your repositories'},condition:'exists'}],final:true};
 const message=text=>({type:'message',role:'assistant',content:[{type:'output_text',text}]});
 const page={status:'observed',source:'browser_dom',snapshot:'owned-recovered',browser:'opera',session_id:'owned',tab_id:3,url:'https://owned.test/repositories',document_id:'new-document',complete:true,controls:[{id:'heading',name:'Your repositories',role:'heading',enabled:true,protected:false}],untrusted_page_data:true};
-function setup({decision='complete',observation=page,recovery=true}={}){
+function setup({decision='complete',observation=page,recovery=true,tool='browser_execute_plan',workflow=false}={}){
   const requests=[],dispatched=[];
-  const ai=new AI(settings,()=>assert.fail('No credentials'),async(name,args)=>{
-    validateTool(name,args);dispatched.push(name);assert.equal(name,'browser_execute_plan');
+  const ai=new AI(()=>({...settings(),...(workflow?{allowDesktop:true,workflowEngine:true}:{})}),()=>assert.fail('No credentials'),async(name,args)=>{
+    validateTool(name,args);dispatched.push(name);assert.equal(name,tool);
     assert.equal(dispatched.length,1,'An unknown navigation may never be replayed.');
     return {status:'interrupted',verified:false,action_attempted:true,outcome_unknown:true,reason:'page_outcome_unknown',source_reason:'page_operation_failed',...(recovery?{recovery_required:true,read_only_recovery:true}:{}),...(observation?{observation}:{})};
   },()=>assert.fail('No network'));
   ai.request=async(endpoint,body)=>{
     assert.equal(endpoint,'responses');requests.push(body);
-    if(requests.length===1)return {status:'completed',output:[{type:'function_call',call_id:'navigate-once',name:'browser_execute_plan',arguments:JSON.stringify(plan)}]};
+    if(requests.length===1)return {status:'completed',output:[{type:'function_call',call_id:'navigate-once',name:tool,arguments:JSON.stringify(workflow?{version:1,steps:[{op:'bind',target:{kind:'native',app:'Owned'}},{op:'act',steps:plan.steps,completion:plan.completion}],completion:plan.completion}:plan)}]};
     assert.equal(requests.length,2,'Read-only review must end the task rather than return to the actor.');
     assert.equal(body.response_format?.json_schema?.name,'desktop_completion');
     assert.equal(body.input[0].content,'Original request: '+original);
@@ -31,6 +31,12 @@ test('unknown browser input with fresh read-only recovery can finish through one
   const h=setup();
   assert.equal(await h.ai.chat(original),'Your repositories are open.');
   assert.equal(h.requests.length,2);assert.deepEqual(h.dispatched,['browser_execute_plan']);
+});
+
+test('native and nested workflow uncertainty can finish via read-only review without losing recovery evidence',async()=>{
+ for(const options of [{tool:'computer_execute_plan',observation:{...page,source:'native-accessibility',window:{pid:1,window_id:2}}},{tool:'computer_run_workflow',workflow:true}]){
+  const h=setup(options);assert.equal(await h.ai.chat(original),'Your repositories are open.');assert.equal(h.requests.length,2);assert.deepEqual(h.dispatched,[options.tool]);
+ }
 });
 
 test('incomplete recovery review cannot resume actor input or repeat the navigation',async()=>{

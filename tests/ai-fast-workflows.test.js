@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {AI}=require('../ai');
-const settings=()=>({chatProvider:'deepseek',allowDesktop:true,allowScreen:false});
+const settings=()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false});
 const frame={status:'inspected',snapshot:'fresh',focus_verified:true,window:{pid:1,window_id:2,title:'Calculator'},controls:[{control_id:'1',name:'One',type:'Button',enabled:true}],degraded:false,truncated:false};
 const say=text=>({status:'completed',output:[{type:'message',content:[{type:'output_text',text}]}]});
 test('an exact app-open task verifies locally without credentials or a model request',async()=>{

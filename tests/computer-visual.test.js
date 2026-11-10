@@ -2,6 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {ComputerVisual} = require('../computer-visual');
+const {ComputerUse} = require('../computer-use');
 
 const TARGET={pid:42,window_id:123};
 const WINDOW={scope:'window',...TARGET};
@@ -27,6 +28,9 @@ function setup() {
     if(mutationNames.has(name)){if(config.actionError)throw config.actionError;return packet(config.action);}
     throw new Error(`Unexpected tool ${name}`);
   }};
+  computer.call=ComputerUse.prototype.call;
+  computer.invalidateSession=ComputerUse.prototype.invalidateSession;
+  computer.sessionRevision=0;
   const visual=new ComputerVisual({computer,now:()=>time});
   return {visual,computer,calls,settings,config,advance:ms=>time+=ms,mutations:()=>calls.filter(call=>mutationNames.has(call.name))};
 }
@@ -259,7 +263,16 @@ test('expiry while ensuring the native session prevents input dispatch',async()=
   const f=setup(),snap=await observed(f);let prepared=0;
   f.computer.ensureSession=async()=>{if(++prepared===2)f.advance(20001);};
   const result=await f.visual.input({snapshot:snap.snapshot,kind:'type',text:'hello'});
-  assert.equal(result.status,'interrupted');assert.match(result.message,/expired/);assert.equal(f.mutations().length,0);
+  assert.equal(result.status,'refused');assert.equal(result.outcome_unknown,false);assert.match(result.message,/expired/);assert.equal(f.mutations().length,0);
+});
+
+test('visual discovery shares the named session and renewed sessions reject old screenshots',async()=>{
+  const f=setup(),snap=await observed(f);
+  f.config.before=async name=>{if(name==='list_windows')f.computer.sessionRevision++;};
+  const result=await f.visual.input({snapshot:snap.snapshot,kind:'click',...clickBox(.5,.5)});
+  assert.equal(result.status,'refused');assert.equal(result.outcome_unknown,false);
+  assert.match(result.message,/session changed/);assert.equal(f.mutations().length,0);
+  for(const call of f.calls)assert.equal(call.args.session,f.computer.session,call.name);
 });
 test('Stop or permission revocation during async preflight prevents the action',async()=>{
   for(const stop of [f=>f.visual.clear(),f=>f.computer.generation++,f=>f.settings.allowScreen=false]){

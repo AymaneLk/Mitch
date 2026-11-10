@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Mitch GPT test fixture</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'">
+<style>body{font:22px 'Segoe UI';padding:40px;background:#f5f4ed}button{font:inherit;padding:20px;margin:20px 0}output{display:block}</style></head>
+<body><h1>Owned Mitch test window</h1><button id="action">Confirm test</button><output id="result">Not confirmed</output>
+<script>window.testClicks=0;document.getElementById('action').onclick=()=>{window.testClicks++;document.getElementById('result').textContent='Test confirmed';};</script></body></html>

@@ -24,6 +24,8 @@ function checkedState(element) {
   if (state !== undefined) return state;
   if ([true, 1, 'on', 'On', 'checked'].includes(element.toggle_state)) return true;
   if ([false, 0, 'off', 'Off', 'unchecked'].includes(element.toggle_state)) return false;
+  // The Windows driver reports UIA TogglePattern as selected on CheckBox.
+  if (normalizeRole(element.role || element.type) === 'checkbox' && typeof element.selected === 'boolean') return element.selected;
   return undefined;
 }
 
@@ -33,12 +35,14 @@ function checkedState(element) {
  * It currently supplies full trees, not UIA events or incremental subtree reads.
  */
 class NativePlanAdapter {
-  constructor({computer, target, context = {}, initialSnapshot} = {}) {
+  constructor({computer, target, context = {}, initialSnapshot, beforeInput, afterInput} = {}) {
     if (!computer || !['inspect', 'action', 'getSnapshot'].every(name => typeof computer[name] === 'function')) throw refused('invalid_adapter', 'The native adapter requires ComputerUse.');
     if (!Number.isSafeInteger(target?.pid) || target.pid <= 0 || !Number.isSafeInteger(target.window_id) || target.window_id <= 0) throw refused('invalid_target', 'Select an exact observed process and window.');
     this.computer = computer;
     this.target = {pid: target.pid, window_id: target.window_id};
     this.context = context;
+    this.beforeInput = beforeInput;
+    this.afterInput = afterInput;
     this.generation = computer.generation;
     this.cachedId = typeof initialSnapshot === 'string' ? initialSnapshot : initialSnapshot?.id || initialSnapshot?.snapshot;
     this.check(context);
@@ -71,6 +75,7 @@ class NativePlanAdapter {
       const focused = booleanState(element, ['focused', 'is_focused', 'has_keyboard_focus'], 'focused');
       return {
         id: String(control.control_id), control_id: String(control.control_id),
+        ...(control.ancestors?.length?{ancestors:control.ancestors}:{}),
         name: control.name, role: normalizeRole(control.type), type: control.type,
         enabled: control.enabled !== false, editable: control.editable === true,
         protected: control.protected === true,
@@ -82,7 +87,7 @@ class NativePlanAdapter {
     });
     // Snapshot IDs change on every native read. Revision describes observable
     // state instead, so a renewed token alone cannot justify repeating input.
-    const revision = createHash('sha256').update(JSON.stringify(controls.map(c => [c.name, c.role, c.enabled, c.editable, c.protected, c.value, c.checked, c.selected, c.focused]))).digest('hex').slice(0, 24);
+    const revision = createHash('sha256').update(JSON.stringify(controls.map(c => [c.name, c.role, c.enabled, c.editable, c.protected, c.value, c.checked, c.selected, c.focused, c.ancestors]))).digest('hex').slice(0, 24);
     return {controls, complete: !snapshot.degraded && !snapshot.truncated, revision, snapshot: snapshot.id, window: {...snapshot.window}, source: 'native-accessibility', ...(snapshot.degraded ? {degraded: true} : {}), ...(snapshot.truncated ? {truncated: true} : {})};
   }
 
@@ -95,7 +100,7 @@ class NativePlanAdapter {
       if (cached) {
         this.scope(cached);
         const age = (typeof this.computer.now === 'function' ? this.computer.now() : Date.now()) - cached.created;
-        if (Number.isFinite(age) && age >= 0 && age <= MAX_CACHE_AGE) return this.normalize(cached);
+        if (Number.isFinite(age) && age >= 0 && age <= MAX_CACHE_AGE&&(!this.computer.signals||this.computer.signals.current(this.target,cached.stateStamp))) return this.normalize(cached);
       }
     }
     this.check(context);
@@ -139,6 +144,7 @@ class NativePlanAdapter {
       } else throw refused('unsupported_operation', 'This native plan operation is unsupported.');
       this.check(context);
       this.computer.getSnapshot(args.snapshot, this.generation);
+      this.beforeInput?.({step, control, frame, args});
     } catch (error) {
       // No input has been invoked yet, so this is a definite refusal.
       error.refused = true;
@@ -149,6 +155,7 @@ class NativePlanAdapter {
       signal: context.signal || this.context.signal,
       assertActive: () => this.check(context),
     });
+    this.afterInput?.(delivered);
     this.check(context);
     if (!delivered?.observation) return delivered;
     const current = this.scope(this.computer.getSnapshot(delivered.observation.snapshot, this.generation));

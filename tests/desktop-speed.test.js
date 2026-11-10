@@ -1,6 +1,6 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const {desktopTools}=require('../desktop-speed');
-const {deepseekPayload}=require('../deepseek-ai');
+
 const event=(overrides={})=>({name:'computer_inspect_window',output:{status:'inspected',snapshot:'fresh',controls:[{name:'Messages',type:'Button',enabled:true}],degraded:false,truncated:false,...overrides}});
 test('complete native observations hide incompatible legacy IDs; fallback retains all tools',()=>{
   const tools=['computer_action','computer_observe','inspect_app','click_app_control','type_in_app','create_note'].map(name=>({name}));
@@ -34,13 +34,4 @@ test('an interrupted plan or unusable native observation restores single-action 
   for(const issue of [{degraded:true},{truncated:true},{accessibility_partial:true},{controls:[]}]){
     assert.equal(desktopTools(tools,[event(issue)]),tools,JSON.stringify(issue));
   }
-});
-test('per-request effort leaves default High and thinking continuity unchanged',()=>{
-  const payload={messages:[{role:'assistant',reasoning_content:'private',content:'Prior result'}]};
-  for(const effort of ['low','high']){
-    const body=deepseekPayload(payload,{localReasoningEffort:effort},{});
-    assert.equal(body.reasoning_effort,effort);assert.equal(body.thinking.type,'enabled');assert.equal(body.messages[0].reasoning_content,'private');
-  }
-  assert.equal(deepseekPayload(payload,{},{}).reasoning_effort,'high');
-  assert.throws(()=>deepseekPayload(payload,{localReasoningEffort:'bogus'},{}),/Invalid thinking/);
 });

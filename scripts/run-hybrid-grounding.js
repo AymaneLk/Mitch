@@ -1,31 +1,21 @@
 'use strict';
 
 // Opt-in model benchmark on owned, hidden Electron fixtures. No desktop input,
-// user pages, microphone or planner calls. Only a few paid box-verifier calls.
-const {app, BrowserWindow, nativeImage, safeStorage} = require('electron');
-const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
+// user pages, microphone or planner calls. Only a few account-authorized box-verifier calls.
+const {app, BrowserWindow, nativeImage} = require('electron');
+const fs = require('node:fs'), path = require('node:path');
 const {AI} = require('../ai');
 const {refineBox, refineTarget} = require('../visual-grounding');
 const root = path.resolve(__dirname, '..'), directory = path.join(root, 'test-output');
-const originalProfile = path.join(app.getPath('appData'), 'Pixie Windows Companion');
 app.disableHardwareAcceleration();
 // Destroying our render-only window must not end pending model measurements.
 app.on('window-all-closed', () => {});
-let temporaryProfile, key = '', startupError, window, passed = false;
-
-try {
-  const state = JSON.parse(fs.readFileSync(path.join(originalProfile, 'Local State'), 'utf8'));
-  if (!state.os_crypt?.encrypted_key) throw Object.assign(Error(), {code: 'encrypted_metadata_missing'});
-  temporaryProfile = fs.mkdtempSync(path.join(os.tmpdir(), 'mitch-hybrid-grounding-'));
-  fs.writeFileSync(path.join(temporaryProfile, 'Local State'), JSON.stringify({os_crypt: state.os_crypt}));
-  app.setName('Mitch');
-  app.setPath('userData', temporaryProfile);
-  app.setAppUserModelId('local.independent.pixie.windows');
-} catch (error) { startupError = error; }
+const {connect}=require('./chatgpt-benchmark-host');
+let host,window,passed=false;
 
 const report = {
   status: 'running', at: new Date().toISOString(), version: require('../package.json').version,
-  scope: 'A small paired target set and one absent-target diagnostic in owned hidden Electron screenshots. Real CPU GoClick proposals and configured DeepSeek Flash box verification. No user apps or desktop input. Existing-box baseline is supplied fixture bounds, so planner, speech, screenshot capture and task execution latency are excluded. Point-inside-target is not accurate centering or task-completion accuracy.',
+  scope: 'A small paired target set and one absent-target diagnostic in owned hidden Electron screenshots. Real CPU GoClick proposals and account-selected GPT box verification. No user apps or desktop input. Existing-box baseline is supplied fixture bounds, so planner, speech, screenshot capture and task execution latency are excluded. Point-inside-target is not accurate centering or task-completion accuracy.',
   rows: [],
 };
 const save = () => {fs.mkdirSync(directory, {recursive: true}); fs.writeFileSync(path.join(directory, 'hybrid-grounding-benchmark.json'), JSON.stringify(report, null, 2));};
@@ -105,12 +95,9 @@ async function trial(ai, fixture, mode) {
 
 app.whenReady().then(async () => {
   console.log(JSON.stringify({phase: 'ready'}));
-  if (startupError) throw startupError;
-  const saved = JSON.parse(fs.readFileSync(path.join(originalProfile, 'library.json'), 'utf8'));
-  if (!saved.encryptedDeepSeekKey) throw Object.assign(Error(), {code: 'encrypted_key_missing'});
-  key = (await safeStorage.decryptStringAsync(Buffer.from(saved.encryptedDeepSeekKey, 'base64'))).result;
-  const settings = {...saved.settings, chatProvider: 'deepseek', deepseekChatModel: 'deepseek-flash', allowScreen: true, localGrounding: true};
-  const ai = new AI(() => settings, async () => '', async () => {throw Error('No desktop tools in this benchmark');}, fetch, async () => key);
+  host=await connect();
+  const settings={...host.settings,allowScreen:true,localGrounding:true};
+  const ai=new AI(()=>settings,async()=>'',async()=>{throw Error('No desktop tools in this benchmark');},fetch,host.provider);
   report.runtime = await ai.groundingStatus();
   if (!report.runtime.ready) throw Object.assign(Error(), {code: 'local_grounder_not_ready'});
   console.log(JSON.stringify({phase: 'runtime_ready', device: report.runtime.device}));
@@ -136,9 +123,7 @@ app.whenReady().then(async () => {
   report.errorCode = ['encrypted_metadata_missing', 'encrypted_key_missing', 'local_grounder_not_ready'].includes(error.code) ? error.code : 'benchmark_failed';
   save(); console.error(JSON.stringify({status: report.status, errorCode: report.errorCode}));
 }).finally(() => {
-  key = '';
+  host?.close();
   if (window && !window.isDestroyed()) window.destroy();
-  if (temporaryProfile) {try {fs.unlinkSync(path.join(temporaryProfile, 'Local State'));} catch {}}
-  report.encryptedMetadataRemoved = !temporaryProfile || !fs.existsSync(path.join(temporaryProfile, 'Local State'));
   save(); app.exit(passed ? 0 : 1);
 });

@@ -33,7 +33,7 @@ module.exports=async function({BrowserWindow,computer,dispatch,desktopActivity,d
       return entry.output=await dispatch(name,args,context);
     }finally{entry.durationMs=Math.round(performance.now()-started);}
   };
-  const ai=new AI(()=>({chatProvider:'deepseek',deepseekChatModel:'deepseek-flash',allowDesktop:true,allowScreen:false}),async()=>{throw Error('Credential access forbidden in native fixture');},wrappedDispatch,async()=>{throw Error('Network forbidden in native fixture');},async()=>{throw Error('Credential access forbidden in native fixture');});
+  const ai=new AI(()=>({chatProvider:'chatgpt',allowDesktop:true,allowScreen:false}),async()=>{throw Error('Credential access forbidden in native fixture');},wrappedDispatch,async()=>{throw Error('Network forbidden in native fixture');},async()=>{throw Error('Credential access forbidden in native fixture');});
   ai.request=async()=>{modelRequests++;throw Error('Model fallback reached; network is disabled for this fixture.');};
   const run=async(text,{fallback=false}={})=>{
     const before={clicks,writes,modelRequests,toolCalls:calls.length},started=performance.now();

@@ -17,13 +17,10 @@ document.querySelector('.brand').onclick=e=>{e.preventDefault();go('home');};
 async function loadState(){
   currentState=await api.state();const s=currentState.settings;
   document.querySelector('.version').textContent='PREVIEW '+currentState.version;
-  const configured=s.chatProvider==='local'||(s.chatProvider==='deepseek'&&currentState.hasDeepSeekKey&&s.deepseekChatModel);
+  const configured=s.chatProvider==='local'||(s.chatProvider==='chatgpt'&&currentState.chatgpt?.planUsage);
   $('setupBanner').hidden=configured;$('setupBanner').style.display=configured?'none':'flex';
-  $('keyStatus').textContent=currentState.hasKey?'Saved securely':'Not connected';$('apiKey').placeholder=currentState.hasKey?'Leave blank to keep your saved key':'Paste your API key';
-  for(const key of ['voiceModel','chatModel','transcriptionModel'])$(key).value=s[key];
-  for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage','deepseekChatModel'])$(key).value=s[key]||'';
-  $('deepseekKeyStatus').textContent=currentState.hasDeepSeekKey?'DeepSeek key saved securely. Leave blank to keep it.':'No DeepSeek key saved.';
-  showDeepSeekSettings();
+  for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage'])$(key).value=s[key]||'';
+  renderChatGPT(currentState.chatgpt);
   for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled'])$(key).checked=s[key];
   for(const key of ['workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows'])$(key).checked=s[key]!==false;
   $('screenId').replaceChildren(...currentState.screens.map(d=>{const o=document.createElement('option');o.value=d.id;o.textContent=`${d.label} · ${d.width} × ${d.height}`;return o;}));
@@ -34,7 +31,7 @@ async function loadState(){
   renderBrowserStatus(await api.browserStatus());renderTaskTiming(await api.taskTiming());
   $('localGrounding').checked=s.localGrounding===true;renderGroundingStatus(await api.groundingStatus());
 }
-function renderBrowserStatus(state){$('browserStatus').textContent=state.message||(!state.running?'Browser connection unavailable.':state.connected===1?(state.pageCapable&&(!state.recoveryCapable||!state.navigationCapable)?'Reload Mitch Browser Bridge in the browser extensions page, then refresh your tabs to finish the faster navigation update.':state.pageAccess?'Browser connected · fast tab and page controls ready.':state.pageCapable?'Tab controls ready. Enable page controls in the browser extension for faster webpage actions.':'Tab controls ready. Reload the browser extension to add page controls.'):state.connected>1?'Several browser profiles connected. Name the browser in your request.':'Load the Mitch Browser extension to connect.');$('browserFolderPath').textContent=state.directory||'';}
+function renderBrowserStatus(state){$('browserStatus').textContent=state.message||(!state.running?'Browser connection unavailable.':state.connected===1?(state.pageCapable&&(!state.recoveryCapable||!state.navigationCapable||!state.publicSiteCapable)?'Reload Mitch Browser Bridge in the browser extensions page, then refresh your tabs to activate faster website tasks.':state.pageAccess?'Browser connected · fast tab, page and website tasks ready.':state.pageCapable?'Tab controls ready. Enable page controls in the browser extension for faster webpage actions.':'Tab controls ready. Reload the browser extension to add page controls.'):state.connected>1?'Several browser profiles connected. Name the browser in your request.':'Load the Mitch Browser extension to connect.');$('browserFolderPath').textContent=state.directory||'';}
 function renderTaskTiming(timing){const routes={browser:'direct browser controls',folder:'direct folder access',local:'familiar task',workflow:'planned steps',replay:'reused verified steps'};$('taskTiming').textContent=timing?`Last task: ${(timing.totalMs/1000).toFixed(2)} seconds · ${timing.modelRequests} AI requests · ${routes[timing.route]||'general assistant'}.`:'';}
 function renderGroundingStatus(state){$('groundingStatus').textContent=!state.enabled?'Local targeting is off.':state.ready?`${state.model} ready on ${state.device}. Your AI provider confirms visual targets.`:'Local model unavailable or loading. Your configured vision provider remains available.';}
 $('checkGrounding').onclick=async()=>{try{renderGroundingStatus(await api.groundingStatus());}catch(error){toast(error.message);}};
@@ -46,16 +43,48 @@ $('stopTasks').onclick=async()=>{try{await api.stopTasks();toast('Tasks stopped.
 $('checkComputer').onclick=async()=>{const button=$('checkComputer');button.disabled=true;$('computerResult').textContent='Checking…';try{const state=await api.checkComputer();renderComputerStatus(state);$('computerResult').textContent=`Connected. Found ${state.windowsFound} open windows.`;}catch(e){$('computerResult').textContent=e.message;}finally{renderComputerStatus(await api.computerStatus());}};
 $('resumeComputer').onclick=async()=>{try{renderComputerStatus(await api.resumeComputer());$('computerResult').textContent='Ready for a new request.';}catch(e){toast(e.message);}};
 api.on('computerState',renderComputerStatus);
-function showDeepSeekSettings(){$('deepseekSettings').hidden=$('chatProvider').value!=='deepseek';}
-$('chatProvider').onchange=showDeepSeekSettings;
-function deepseekForm(){return {deepseekChatModel:$('deepseekChatModel').value.trim(),deepseekKey:$('deepseekKey').value.trim()};}
-$('testDeepSeek').onclick=async()=>{const values=deepseekForm();$('testDeepSeek').disabled=true;$('deepseekConnectionResult').textContent='Connecting to DeepSeek…';try{const result=await api.testDeepSeek(values);$('deepseekChatModel').value=result.model;$('deepseekConnectionResult').textContent='Connected to '+result.model+'. Save settings to use it.';}catch(e){$('deepseekConnectionResult').textContent=e.message.replace(/^Error invoking.*?Error: /,'');}finally{$('testDeepSeek').disabled=false;}};
-$('removeDeepSeekKey').onclick=async()=>{try{await api.deleteDeepSeekKey();$('deepseekKey').value='';await loadState();toast('DeepSeek key removed.');}catch(e){toast(e.message);}};
-$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={key:$('apiKey').value.trim(),screenId:$('screenId').value,...deepseekForm()};for(const key of ['voiceModel','chatModel','transcriptionModel','chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled','localGrounding','workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows'])values[key]=$(key).checked;await api.saveSettings(values);$('apiKey').value='';$('deepseekKey').value='';$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
-$('removeKey').onclick=async()=>{await api.deleteKey();$('apiKey').value='';await loadState();toast('Saved key removed.');};
+let chatgptState={accounts:[],models:[]};
+function renderChatGPT(state){
+  if(!state)return;chatgptState=state;if(currentState)currentState.chatgpt=state;
+  const connecting=state.status==='connecting',account=state.accounts.find(a=>a.id===state.activeId);
+  $('chatgptStatus').textContent=state.message||(state.connected?'Connected'+(account?.email?' · '+account.email:''):'Not connected');
+  $('chatgptAccount').replaceChildren(...(state.accounts.length?state.accounts:[{id:'',label:'No saved connections'}]).map(a=>{const o=document.createElement('option');o.value=a.id;o.textContent=a.label+(a.id&&!a.connected?' · reconnect':'');return o;}));
+  $('chatgptAccount').disabled=!state.accounts.length||connecting;
+  if(state.activeId)$('chatgptAccount').value=state.activeId;
+  $('chatgptMode').value=state.mode||'fast';$('chatgptTransport').value=state.transport||'http';
+  const models=state.models.length?[...state.models]:[{id:'',name:state.connected?'Refresh models to get started':'Connect to load models'}];
+  if(state.selectedModel&&!models.some(m=>m.id===state.selectedModel))models.unshift({id:state.selectedModel,name:'Previously selected model · unavailable'});
+  $('chatgptModel').replaceChildren(...models.map(m=>{const o=document.createElement('option');o.value=m.id;o.textContent=m.name;o.disabled=!!m.id&&!state.models.some(v=>v.id===m.id);return o;}));
+  $('chatgptModel').value=state.selectedModel||'';
+  $('chatgptSignIn').disabled=connecting;$('chatgptSignIn').textContent=state.accounts.length?'Connect another account':'Continue with ChatGPT';
+  $('chatgptReconnect').hidden=!state.accounts.length||connecting;$('chatgptDisconnect').hidden=!state.connected||connecting;$('chatgptCancelSignIn').hidden=!connecting;
+  $('chatgptEnablePlan').hidden=!state.connected||state.planUsage||connecting;
+  $('chatgptResume').hidden=!state.usagePaused;
+  for(const id of ['chatgptModel','chatgptMode','chatgptModels','chatgptTransport'])$(id).disabled=!state.planUsage||connecting;
+  const configured=currentState?.settings.chatProvider==='local'||state.planUsage;$('setupBanner').hidden=configured;$('setupBanner').style.display=configured?'none':'flex';
+}
+async function connectionAction(action){$('chatgptError').textContent='';try{renderChatGPT(await action());}catch(e){$('chatgptError').textContent=e.message.replace(/^Error invoking.*?Error: /,'');}}
+$('chatgptSignIn').onclick=()=>connectionAction(()=>api.chatgptSignIn());
+$('chatgptReconnect').onclick=()=>connectionAction(()=>api.chatgptSignIn({accountId:$('chatgptAccount').value}));
+$('chatgptEnablePlan').onclick=()=>connectionAction(()=>api.chatgptSignIn({accountId:chatgptState.activeId,enablePlan:true}));
+$('chatgptCancelSignIn').onclick=()=>connectionAction(()=>api.chatgptCancelSignIn());
+$('chatgptDisconnect').onclick=()=>connectionAction(()=>api.chatgptDisconnect());
+$('chatgptAccount').onchange=()=>{const a=chatgptState.accounts.find(a=>a.id===$('chatgptAccount').value);connectionAction(()=>a?.connected?api.chatgptSwitch(a.id):api.chatgptSignIn({accountId:a?.id}));};
+$('chatgptModels').onclick=()=>connectionAction(()=>api.chatgptModels());
+$('chatgptMode').onchange=()=>connectionAction(()=>api.chatgptSelect({mode:$('chatgptMode').value}));
+$('chatgptModel').onchange=()=>connectionAction(()=>api.chatgptSelect({mode:$('chatgptMode').value,model:$('chatgptModel').value}));
+$('chatgptTransport').onchange=()=>connectionAction(()=>api.chatgptSelect({mode:$('chatgptMode').value,transport:$('chatgptTransport').value}));
+$('chatgptUsage').onclick=()=>api.chatgptUsage().catch(e=>toast(e.message));
+$('chatgptResume').onclick=()=>connectionAction(async()=>{const state=await api.chatgptResume();$('chatgptResume').hidden=true;return state;});
+api.on('chatgptState',renderChatGPT);
+$('settingsForm').onsubmit=async e=>{e.preventDefault();try{const values={screenId:$('screenId').value};for(const key of ['chatProvider','transcriptionProvider','localChatModel','localChatUrl','localSpeechUrl','localVoiceLanguage'])values[key]=$(key).value.trim();for(const key of ['allowScreen','allowDesktop','formatDictation','wakeEnabled','localGrounding','workflowEngine','fastWorkflowPlanning','speculativePlanning','reuseWorkflows'])values[key]=$(key).checked;await api.saveSettings(values);$('settingsResult').textContent='Saved. You’re all set.';await loadState();toast('Settings saved.');}catch(e){toast(e.message);}};
 $('calendarImport').onclick=async()=>{try{const r=await api.chooseCalendar();if(r.status==='imported'){toast('Calendar imported.');loadState();}}catch(e){toast(e.message);}};
 function bubble(text,who='assistant',error=false){$('emptyChat')?.remove();const b=document.createElement('div');b.className='bubble '+who+(error?' error':'');const label=document.createElement('span');label.className='speaker';label.textContent=who==='user'?'YOU':'MITCH';b.append(label,document.createTextNode(text));$('messages').append(b);$('messages').scrollTop=$('messages').scrollHeight;return b;}
-async function chat(text){if(chatBusy||!text.trim())return;chatBusy=true;$('sendMessage').disabled=true;bubble(text,'user');$('message').value='';$('activity').textContent='Thinking…';try{const result=await api.chat(text);bubble(result);}catch(e){bubble(e.message.replace(/^Error invoking.*?Error: /,''),'assistant',true);}finally{chatBusy=false;$('sendMessage').disabled=false;$('activity').textContent='';}}
+let streamingBubble=null,streamingText='';
+function setBubble(el,text,preview=false){el.replaceChildren();const label=document.createElement('span');label.className='speaker';label.textContent=preview?'MITCH · drafting':'MITCH';el.append(label,document.createTextNode(text));$('messages').scrollTop=$('messages').scrollHeight;}
+api.on('chatStream',event=>{if(!chatBusy)return;if(event.type==='start'){streamingText='';if(streamingBubble)setBubble(streamingBubble,'Thinking…',true);}else if(event.type==='delta'){streamingText=(streamingText+event.delta).slice(0,64000);streamingBubble||=bubble('');setBubble(streamingBubble,streamingText,true);}});
+api.on('taskStatus',status=>{const labels={thinking:'Thinking…',executing:'Executing…',completed:'Completed',usage_limit:'Usage limit reached',session_expired:'Session expired',stopped:'Stopped',error:'Could not complete the request',connected:'Connected'};if(labels[status])$('activity').textContent=labels[status];if(status==='usage_limit')$('chatgptResume').hidden=false;});
+async function chat(text){if(chatBusy||!text.trim())return;chatBusy=true;streamingBubble=null;streamingText='';$('sendMessage').disabled=true;bubble(text,'user');$('message').value='';$('activity').textContent='Thinking…';try{const result=await api.chat(text);if(streamingBubble)setBubble(streamingBubble,result);else bubble(result);}catch(e){const message=e.message.replace(/^Error invoking.*?Error: /,'');if(streamingBubble){setBubble(streamingBubble,message);streamingBubble.classList.add('error');}else bubble(message,'assistant',true);}finally{streamingBubble=null;chatBusy=false;$('sendMessage').disabled=false;}}
 $('chatForm').onsubmit=e=>{e.preventDefault();chat($('message').value);};$('message').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();chat($('message').value);}};
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>chat(b.dataset.prompt));
 $('clearChat').onclick=async()=>{try{await api.resetChat();$('messages').replaceChildren();bubble('A fresh conversation. What would you like to do?');}catch(e){toast(e.message);}};

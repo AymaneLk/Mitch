@@ -36,8 +36,8 @@
     if (!plain(value) || Object.keys(value).some(key => !allowed.includes(key))) throw fail('invalid_plan', `Invalid ${label} fields.`);
   }
 
-  function selector(value) {
-    keysOnly(value, ['role', 'name', 'match'], 'target');
+  function selector(value, ancestor = false) {
+    keysOnly(value, ancestor ? ['role', 'name', 'match'] : ['role', 'name', 'match', 'within'], 'target');
     for (const field of ['role', 'name']) {
       if (value[field] !== undefined && (typeof value[field] !== 'string' || !value[field].trim() || value[field].length > (field === 'role' ? 100 : 1000))) {
         throw fail('invalid_plan', `Target ${field} must be a nonempty bounded string.`);
@@ -45,7 +45,7 @@
     }
     if (!value.role && !value.name) throw fail('invalid_plan', 'A target requires a name or role.');
     if (value.match !== undefined && !['exact', 'contains'].includes(value.match)) throw fail('invalid_plan', 'Target match must be exact or contains.');
-    return { ...(value.role ? {role: value.role} : {}), ...(value.name ? {name: value.name} : {}), match: value.match || 'exact' };
+    return { ...(value.role ? {role: value.role} : {}), ...(value.name ? {name: value.name} : {}), match: value.match || 'exact', ...(value.within ? {within:selector(value.within,true)} : {}) };
   }
 
   function assertion(value, allowed = ['target', 'condition', 'value']) {
@@ -93,6 +93,7 @@
 
   function matchControls(controls, target) {
     return (Array.isArray(controls) ? controls : []).filter(control => {
+      if (target.within && !matchControls(control.ancestors || [], target.within).length) return false;
       if (target.role && normalizeRole(control.role || control.type) !== normalizeRole(target.role)) return false;
       if (!target.name) return true;
       const name = normalized(control.name), expected = normalized(target.name);
@@ -107,9 +108,24 @@
     return observation;
   }
 
+  // Native labels often duplicate the name of their associated control. Only
+  // disambiguate by an observed role when every discarded match is inert text.
+  // Disabled/protected controls and two interactive matches remain ambiguous.
+  function typedTarget(controls, target, operation) {
+    if (target.role) return target;
+    const matches=matchControls(controls,target);
+    if(matches.length<2)return target;
+    const inert=c=>PASSIVE_CLICK_ROLES.has(normalizeRole(c.role||c.type))&&!c.protected&&!c.editable&&!c.clickable&&c.value===undefined&&c.checked===undefined&&c.selected===undefined;
+    const active=matches.filter(c=>!inert(c));
+    if(active.length!==1)return target;
+    const c=active[0],role=normalizeRole(c.role||c.type);
+    if(!role||(['value','fill'].includes(operation)&&typeof c.value!=='string')||(['checked','selected'].includes(operation)&&typeof c[operation]!=='boolean')||!['value','fill','checked','selected','click'].includes(operation))return target;
+    return {...target,role};
+  }
+
   function testCondition(observation, expected) {
     requireObservation(observation);
-    const matches = matchControls(observation.controls, expected.target);
+    const matches = matchControls(observation.controls, typedTarget(observation.controls,expected.target,expected.condition));
     if (matches.length > 1) throw fail('ambiguous_target', 'More than one live control matches the target.');
     const condition = expected.condition || 'exists';
     if (condition === 'absent') return matches.length === 0;
@@ -206,6 +222,7 @@
         // Adapters may return a complete view scoped to this selector. Resolve
         // every new selector against its own live view, including assertions.
         await observe(false, step.target);
+        step.target=typedTarget(result.observation.controls,step.target,step.condition||step.op);
         if (['wait', 'assert'].includes(step.op)) {
           await waitFor(step, step.timeout_ms ?? (step.op === 'wait' ? 2000 : 0));
           currentRecord.status = 'passed';
@@ -237,7 +254,7 @@
             // This is acknowledgment of input delivery, not proof of the
             // requested result. Retain exact live targets so the host can
             // prevent a partial plan's delivered prefix from being replayed.
-            const resolved = {name: String(control.name ?? ''), role: normalizeRole(control.role || control.type), match: 'exact'};
+            const resolved = {name: String(control.name ?? ''), role: normalizeRole(control.role || control.type), match: 'exact', ...(control.ancestors?.length ? {ancestors:control.ancestors} : {})};
             currentRecord.known_delivery = true;
             currentRecord.resolved_target = resolved;
             result.delivered_steps.push({index, op: step.op, target: resolved,
@@ -305,5 +322,5 @@
     return result;
   }
 
-  return {validatePlan, executePlan, matchControls, testCondition, normalizeRole};
+  return {validatePlan, executePlan, matchControls, testCondition, normalizeRole, typedTarget};
 });

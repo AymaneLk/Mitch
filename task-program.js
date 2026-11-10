@@ -1,7 +1,7 @@
 'use strict';
 const Ajv=require('ajv');
 const {PROGRAM_SCHEMA,INTERNAL_PROGRAM_SCHEMA}=require('./task-program-schema');
-const {validatePlan,matchControls,testCondition}=require('./action-plan');
+const {validatePlan,matchControls,testCondition,typedTarget}=require('./action-plan');
 const schemaCheck=new Ajv({strict:false,allErrors:false}).compile(INTERNAL_PROGRAM_SCHEMA);
 const MAX_DURATION=30000,MAX_NODES=48,MAX_INPUTS=32,MAX_DEPTH=3;
 const invalid=(message,code='invalid_program')=>Object.assign(Error(message),{code,refused:true});
@@ -26,6 +26,7 @@ function validateBinding(target){
 }
 function normalizeTaskProgram(program){
   if(!plain(program))throw invalid('The workflow must be a bounded object.');
+  if(program.version===2)program=require('./compact-task').compileCompactTask(program);
   if(Object.hasOwn(program,'completion'))return program;
   const terminal=Array.isArray(program.steps)?program.steps.at(-1):null;
   if(terminal?.op!=='act'||!Array.isArray(terminal.completion)||terminal.completion.length<1||terminal.completion.length>4)throw invalid('Omitting final completion requires a final unconditional action phase with nonempty completion assertions.');
@@ -116,6 +117,12 @@ async function executeTaskProgram({program,host,context={},bindings={},timeoutMs
   };
   const propagate=resultValue=>{
     if(resultValue?.observation)result.observation=resultValue.observation;
+    if(resultValue?.outcome_unknown){
+      if(typeof resultValue.reason==='string')result.source_reason=resultValue.reason;
+      if(resultValue.read_only_recovery===true)result.read_only_recovery=true;
+      if(resultValue.distinct_action_recovery===true){result.distinct_action_recovery=true;result.recovery=resultValue.recovery;}
+      if(Array.isArray(resultValue.attempted_steps))result.attempted_steps=resultValue.attempted_steps;
+    }
     if(Array.isArray(resultValue?.delivered_steps))result.delivered_steps.push(...resultValue.delivered_steps.slice(0,32).map(step=>({...step,program_index:currentRecord?.index})));
     if(resultValue?.attempted>0||resultValue?.action_attempted||resultValue?.delivered_steps?.length)hadMutation=true;
     if(resultValue?.outcome_unknown)throw Object.assign(invalid('A workflow action has an unknown outcome.','outcome_unknown'),{outcome_unknown:true});
@@ -148,7 +155,7 @@ async function executeTaskProgram({program,host,context={},bindings={},timeoutMs
         // Native value reads may focus the bound window to refresh cached
         // accessibility values. Cancellation during focus is uncertain input.
         inMutation=true;const frame=await observe(true,target,true);inMutation=false;
-        const matches=matchControls(frame.controls,target);
+        const matches=matchControls(frame.controls,typedTarget(frame.controls,target,step.attribute));
         if(matches.length!==1)throw invalid('A read requires one uniquely observed control.','ambiguous_target');
         if(matches[0].protected)throw invalid('A protected control cannot be read.','protected_target');
         const value=matches[0][step.attribute];if(typeof value!=='string'||value.length>8000)throw invalid('The requested control value is unavailable or too large.','unavailable_value');
@@ -183,8 +190,11 @@ async function executeTaskProgram({program,host,context={},bindings={},timeoutMs
     check();onAbort=()=>controller.abort(context.signal.reason||invalid('The workflow was cancelled.','cancelled'));context.signal?.addEventListener('abort',onAbort,{once:true});
     timer=setTimeout(()=>controller.abort(invalid('The workflow reached its deadline.','deadline_exceeded')),duration);
     await run(program.steps);
+    // One final complete frame proves all final predicates consistently. Do not
+    // issue a full native accessibility read for each individual assertion.
+    const finalFrame=await observe(true);
     for(const raw of program.completion){
-      const condition=resolvePredicate(raw,variables),frame=await observe(true,condition.target),passed=testCondition(frame,condition);
+      const condition=resolvePredicate(raw,variables),frame=finalFrame,passed=testCondition(frame,condition);
       result.completion.push({...condition,passed,observation:{...frame,controls:matchControls(frame.controls,condition.target),selector:condition.target}});
       if(!passed)throw invalid('A final program assertion did not pass.','completion_unmet');
     }
@@ -194,6 +204,7 @@ async function executeTaskProgram({program,host,context={},bindings={},timeoutMs
     if(currentRecord?.status==='pending')currentRecord.status='interrupted';
     if(error.outcome_unknown||(inMutation&&(!error.refused||context.signal?.aborted||controller.signal.aborted||result.reason==='deadline_exceeded'))||(hadMutation&&(context.signal?.aborted||controller.signal.aborted||result.reason==='deadline_exceeded')))result.outcome_unknown=true;
     else if(error.recovery_required||result.delivered_steps.length||hadMutation)result.recovery_required=true;
+    if(context.signal?.aborted||controller.signal.aborted||['cancelled','deadline_exceeded'].includes(result.reason)){delete result.read_only_recovery;delete result.distinct_action_recovery;delete result.recovery;}
   }finally{
     clearTimeout(timer);if(onAbort)context.signal?.removeEventListener('abort',onAbort);controller.abort(invalid('The workflow has ended.','program_finished'));result.stats.duration_ms=Math.max(0,now()-started);
     // Values are transient execution evidence; callers must not persist them
