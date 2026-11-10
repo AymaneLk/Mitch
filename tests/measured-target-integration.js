@@ -19,9 +19,9 @@ module.exports=async function({BrowserWindow,screen,dispatch,overlay,activitySco
       const image=await overlay.webContents.capturePage(),bitmap=image.toBitmap(),size=image.getSize();
       let left=size.width,top=size.height,right=-1,bottom=-1;
       for(let y=0;y<size.height;y++)for(let x=0;x<size.width;x++){
-        const i=(y*size.width+x)*4;if(bitmap[i+1]>200&&bitmap[i+1]-bitmap[i+2]>60&&bitmap[i+1]-bitmap[i]>60){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
+        const i=(y*size.width+x)*4;if(bitmap[i]>210&&bitmap[i+1]>210&&bitmap[i+2]>210&&bitmap[i+3]>180){left=Math.min(left,x);top=Math.min(top,y);right=Math.max(right,x);bottom=Math.max(bottom,y);}
       }
-      assert.ok(right>left&&bottom>top,'The green ring must actually be painted.');
+      assert.ok(right>left&&bottom>top,'The white ring must actually be painted.');
       const bounds=overlay.getContentBounds(),rect=await win.webContents.executeJavaScript('window.targetRect()'),content=win.getContentBounds();
       const actual={x:bounds.x+(left+right)/2*bounds.width/size.width,y:bounds.y+(top+bottom)/2*bounds.height/size.height};
       const expected={x:content.x+rect.x+rect.width/2,y:content.y+rect.y+rect.height/2};
